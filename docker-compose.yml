@@ -1,0 +1,30 @@
+services:
+  db:
+    build: ./docker/db
+    environment:
+      POSTGRES_USER: ward
+      POSTGRES_PASSWORD: ward
+      POSTGRES_DB: ward
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ward_pgdata:/var/lib/postgresql/data
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ward -d ward"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ward_pgdata:
