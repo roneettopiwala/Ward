@@ -1,27 +1,45 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * Design tokens from docs/design/Ward.pdf (dark only; the PDF shows no light
+ * theme). `static` emits every variable on :root so the map style can read
+ * them at runtime (lib/tokens.ts).
+ */
+@theme static {
+  --color-bg: #0a0b0d;
+  --color-surface: #0f1014;
+  --color-surface-raised: #17181c;
+  --color-border: #26272d;
+  --color-border-strong: #373c44;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-fg: #eeeff3;
+  --color-fg-muted: #a5a9b2;
+  --color-fg-subtle: #8a8d95;
 
-/* Dark mode */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-accent: #d6fe39;
+  --color-accent-fg: #0a0b0d;
+
+  --color-support: #58a1fe;
+  --color-neutral: #8d949e;
+  --color-oppose: #fe9951;
+
+  --color-map-ground: #0e0f12;
+  --color-map-road: #08090b;
+  --color-map-building: #2f343a;
+  --color-map-building-selected: #6e7782;
+  --color-map-water: #07111a;
+  --color-map-park: #172a20;
+  --color-map-label: #6b6f77;
+  --color-map-removed: #8a8d95;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --radius-panel: 10px;
+  --radius-control: 8px;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
 }
