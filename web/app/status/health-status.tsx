@@ -15,13 +15,13 @@ type HealthResponse = {
 type Row = { name: string; ok: boolean | null; info: string | null };
 
 function StatusRow({ name, ok, info }: Row) {
-  const dot = ok === null ? "bg-zinc-400" : ok ? "bg-green-500" : "bg-red-500";
+  const dot = ok === null ? "bg-neutral" : ok ? "bg-accent" : "bg-oppose";
   return (
-    <li className="flex items-start gap-3 rounded-lg border border-zinc-200 px-4 py-3 dark:border-zinc-800">
+    <li className="flex items-start gap-3 rounded-panel border border-border bg-surface px-4 py-3">
       <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${dot}`} />
       <div className="min-w-0">
         <p className="font-medium">{name}</p>
-        {info && <p className="break-words text-sm text-zinc-500">{info}</p>}
+        {info && <p className="break-words text-sm text-fg-subtle">{info}</p>}
       </div>
     </li>
   );
@@ -78,7 +78,7 @@ export default function HealthStatus() {
           type="button"
           onClick={() => void check()}
           disabled={loading}
-          className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          className="rounded-control border border-border-strong px-3 py-1 text-sm hover:bg-surface-raised disabled:opacity-50"
         >
           {loading ? "Checking…" : "Refresh"}
         </button>
