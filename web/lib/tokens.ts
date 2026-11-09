@@ -8,6 +8,7 @@ export type MapTokens = {
   park: string;
   label: string;
   removed: string;
+  proposalPark: string;
   accent: string;
   bg: string;
 };
@@ -21,6 +22,7 @@ const cssVars: Record<keyof MapTokens, string> = {
   park: "--color-map-park",
   label: "--color-map-label",
   removed: "--color-map-removed",
+  proposalPark: "--color-map-proposal-park",
   accent: "--color-accent",
   bg: "--color-bg",
 };

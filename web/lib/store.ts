@@ -1,6 +1,13 @@
 import { create } from "zustand";
 
-import type { BaseFeature, Fid, Proposal } from "./types";
+import type {
+  Analysis,
+  BaseFeature,
+  CatalogType,
+  Fid,
+  Proposal,
+  SelectionStatus,
+} from "./types";
 
 /** The edit overlay: base data minus `removed`, plus `proposals`. */
 type Edits = {
@@ -8,32 +15,80 @@ type Edits = {
   proposals: Proposal[];
 };
 
+/** A replacement being set up in the type picker, previewed on the map. */
+export type Draft = {
+  fid: Fid;
+  type: string;
+  params: Record<string, number>;
+};
+
 type MapState = Edits & {
   selected: Fid | null;
+  selectionStatus: SelectionStatus;
   /** Every base feature the user has selected, kept for outlines and footprints. */
   features: Record<Fid, BaseFeature>;
   /** Snapshots of the edits before each action, newest last. */
   history: Edits[];
-  select: (feature: BaseFeature | null) => void;
+  catalog: CatalogType[];
+  draft: Draft | null;
+  /** Analysis per proposal id, and the one the results panel shows. */
+  analyses: Record<string, Analysis>;
+  activeProposal: string | null;
+
+  select: (feature: BaseFeature | null, status?: SelectionStatus) => void;
+  /** Swap a pending selection for what it resolved to, if it is still selected. */
+  resolve: (pendingFid: Fid, feature: BaseFeature, status: SelectionStatus) => void;
   remove: (fid: Fid) => void;
-  replace: (fid: Fid) => void;
+  setCatalog: (catalog: CatalogType[]) => void;
+  startDraft: (fid: Fid) => void;
+  setDraft: (patch: Partial<Omit<Draft, "fid">>) => void;
+  cancelDraft: () => void;
+  /** Commit the draft as a proposal; returns it so analysis can start. */
+  commitDraft: () => Proposal | null;
+  updateAnalysis: (proposalId: string, patch: Partial<Analysis>) => void;
+  closePanel: () => void;
   undo: () => void;
 };
 
 const snapshot = ({ removed, proposals }: Edits): Edits => ({ removed, proposals });
 
-export const useMapStore = create<MapState>()((set) => ({
+export function defaultParams(t: CatalogType): Record<string, number> {
+  return Object.fromEntries(Object.entries(t.params).map(([name, p]) => [name, p.default]));
+}
+
+export const useMapStore = create<MapState>()((set, get) => ({
   selected: null,
+  selectionStatus: "ready",
   features: {},
   removed: [],
   proposals: [],
   history: [],
+  catalog: [],
+  draft: null,
+  analyses: {},
+  activeProposal: null,
 
-  select: (feature) =>
+  select: (feature, status = "ready") =>
     set((s) =>
       feature
-        ? { selected: feature.fid, features: { ...s.features, [feature.fid]: feature } }
-        : { selected: null },
+        ? {
+            selected: feature.fid,
+            selectionStatus: status,
+            features: { ...s.features, [feature.fid]: feature },
+            draft: null,
+          }
+        : { selected: null, draft: null },
+    ),
+
+  resolve: (pendingFid, feature, status) =>
+    set((s) =>
+      s.selected === pendingFid
+        ? {
+            selected: feature.fid,
+            selectionStatus: status,
+            features: { ...s.features, [feature.fid]: feature },
+          }
+        : {},
     ),
 
   remove: (fid) =>
@@ -43,32 +98,71 @@ export const useMapStore = create<MapState>()((set) => ({
         history: [...s.history, snapshot(s)],
         removed: [...s.removed, fid],
         selected: null,
+        draft: null,
       };
     }),
 
-  replace: (fid) =>
+  setCatalog: (catalog) => set({ catalog }),
+
+  startDraft: (fid) =>
     set((s) => {
-      const feature = s.features[fid];
-      if (!feature) return {};
-      const proposal: Proposal = {
-        id: crypto.randomUUID(),
-        type: "placeholder",
-        params: {},
-        geometry: feature.footprint,
-        replaces: [fid],
-      };
-      return {
-        history: [...s.history, snapshot(s)],
-        removed: s.removed.includes(fid) ? s.removed : [...s.removed, fid],
-        proposals: [...s.proposals, proposal],
-        selected: null,
-      };
+      const first = s.catalog[0];
+      return first ? { draft: { fid, type: first.type, params: defaultParams(first) } } : {};
     }),
+
+  setDraft: (patch) =>
+    set((s) => {
+      if (!s.draft) return {};
+      // A new type starts from that type's defaults.
+      const type = s.catalog.find((t) => t.type === (patch.type ?? s.draft?.type));
+      const params =
+        patch.type && patch.type !== s.draft.type && type ? defaultParams(type) : s.draft.params;
+      return { draft: { ...s.draft, ...patch, params: { ...params, ...(patch.params ?? {}) } } };
+    }),
+
+  cancelDraft: () => set({ draft: null }),
+
+  commitDraft: () => {
+    const s = get();
+    const feature = s.draft ? s.features[s.draft.fid] : null;
+    if (!s.draft || !feature) return null;
+    const proposal: Proposal = {
+      id: crypto.randomUUID(),
+      type: s.draft.type,
+      params: s.draft.params,
+      geometry: feature.footprint,
+      replaces: [feature.fid],
+    };
+    set({
+      history: [...s.history, snapshot(s)],
+      removed: s.removed.includes(feature.fid) ? s.removed : [...s.removed, feature.fid],
+      proposals: [...s.proposals, proposal],
+      selected: null,
+      draft: null,
+      analyses: { ...s.analyses, [proposal.id]: { status: "creating" } },
+      activeProposal: proposal.id,
+    });
+    return proposal;
+  },
+
+  updateAnalysis: (proposalId, patch) =>
+    set((s) => ({
+      analyses: { ...s.analyses, [proposalId]: { ...s.analyses[proposalId], ...patch } },
+    })),
+
+  closePanel: () => set({ activeProposal: null }),
 
   undo: () =>
     set((s) => {
       const previous = s.history.at(-1);
       if (!previous) return {};
-      return { ...previous, history: s.history.slice(0, -1), selected: null };
+      const keepPanel = previous.proposals.some((p) => p.id === s.activeProposal);
+      return {
+        ...previous,
+        history: s.history.slice(0, -1),
+        selected: null,
+        draft: null,
+        activeProposal: keepPanel ? s.activeProposal : null,
+      };
     }),
 }));

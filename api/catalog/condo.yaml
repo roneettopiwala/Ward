@@ -1,0 +1,47 @@
+# A residential tower on a lot.
+type: condo
+label: Condo tower
+geometry: polygon
+params:
+  height_m:
+    label: Height
+    unit: m
+    default: 90
+    min: 10
+    max: 300
+    step: 5
+    main: true
+  units:
+    label: Homes
+    unit: homes
+    default: 400
+    min: 10
+    max: 2000
+    step: 10
+    main: true
+render:
+  kind: extrusion
+  height_param: height_m
+  color: accent
+impact_radius_m: 500
+storey_m: 3.2
+impact_metrics:
+  - replaced
+  - site
+  - zoning_fit
+  - height_context
+  - transit
+  - parks
+  - schools
+  - groceries
+  - population
+  - homes_added
+  - floor_area
+  - green_space_per_resident
+relevant_to:
+  - residents
+  - renters
+  - homeowners
+  - families
+  - commuters
+  - local_business
