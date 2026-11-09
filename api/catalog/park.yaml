@@ -1,0 +1,21 @@
+# A public park at ground level.
+type: park
+label: Park
+geometry: polygon
+params: {}
+render:
+  kind: flat
+  color: proposalPark
+impact_radius_m: 500
+impact_metrics:
+  - replaced
+  - site
+  - parks
+  - schools
+  - population
+  - green_space_per_resident
+relevant_to:
+  - residents
+  - families
+  - seniors
+  - dog_owners

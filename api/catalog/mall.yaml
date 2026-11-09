@@ -1,0 +1,33 @@
+# An enclosed shopping centre.
+type: mall
+label: Mall
+geometry: polygon
+params:
+  height_m:
+    label: Height
+    unit: m
+    default: 20
+    min: 5
+    max: 60
+    step: 1
+    main: true
+render:
+  kind: extrusion
+  height_param: height_m
+  color: accent
+impact_radius_m: 500
+storey_m: 5
+impact_metrics:
+  - replaced
+  - site
+  - zoning_fit
+  - height_context
+  - transit
+  - retail_nearby
+  - population
+  - floor_area
+relevant_to:
+  - residents
+  - local_business
+  - workers
+  - commuters

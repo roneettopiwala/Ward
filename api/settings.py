@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     cors_origins: list[str] = ["http://localhost:3000"]
+    anthropic_api_key: str = ""
+    llm_model: str = "anthropic/claude-opus-5-5"
 
 
 @lru_cache

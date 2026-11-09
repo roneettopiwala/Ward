@@ -27,4 +27,6 @@ npm-debug.log*
 
 # Local notes
 CLAUDE.md
-docs/
+
+# Pipeline raw downloads
+pipeline/.cache/
