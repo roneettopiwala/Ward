@@ -29,6 +29,8 @@ CREATE TABLE census_areas (
   housing_dist      JSONB,                    -- {"apartment": 0.7, "house": 0.2, ...}
   occupation_dist   JSONB,
   language_dist     JSONB,
+  commute_dist      JSONB,                    -- {"car": 0.4, "transit": 0.3, "walk": ...}
+  household_dist    JSONB,                    -- {"1": 0.5, "2": 0.3, ..., "5+": 0.01}
   geom              GEOMETRY(MultiPolygon, 4326) NOT NULL
 );
 

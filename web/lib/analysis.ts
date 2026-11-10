@@ -5,6 +5,7 @@ import type { AnalysisStatus, Proposal } from "./types";
 const STATUSES: Record<string, AnalysisStatus> = {
   analyzing: "analyzing",
   "writing pros and cons": "writing",
+  "generating personas": "personas",
   done: "done",
 };
 
@@ -13,7 +14,16 @@ export async function analyzeProposal(proposal: Proposal): Promise<void> {
   const update = (patch: Parameters<ReturnType<typeof useMapStore.getState>["updateAnalysis"]>[1]) =>
     useMapStore.getState().updateAnalysis(proposal.id, patch);
 
-  update({ status: "creating", error: undefined, factSheet: undefined, pros: undefined, cons: undefined });
+  update({
+    status: "creating",
+    error: undefined,
+    factSheet: undefined,
+    pros: undefined,
+    cons: undefined,
+    personaTotal: undefined,
+    personas: undefined,
+    sentiment: undefined,
+  });
   let serverId: string;
   try {
     serverId = await createProposal(proposal);
@@ -26,6 +36,10 @@ export async function analyzeProposal(proposal: Proposal): Promise<void> {
     status: (s) => update({ status: STATUSES[s] ?? "analyzing" }),
     factSheet: (factSheet) => update({ factSheet }),
     prosCons: (pros, cons) => update({ pros, cons }),
+    personas: (personaTotal) => update({ personaTotal, personas: [] }),
+    persona: (card) =>
+      update({ personas: [...(useMapStore.getState().analyses[proposal.id]?.personas ?? []), card] }),
+    sentiment: (sentiment) => update({ sentiment }),
     done: () => update({ status: "done" }),
     error: (error) => update({ status: "error", error }),
   });

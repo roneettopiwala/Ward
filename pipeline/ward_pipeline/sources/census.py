@@ -62,6 +62,9 @@ OCCUPATION = {
 }
 LANGUAGE_TOTAL = 721  # language spoken most often at home
 LANGUAGE = {"english": [724], "french": [725], "non_official": [726]}
+COMMUTE = {"car": [2604], "transit": [2607], "walk": [2608], "bike": [2609], "other": [2610]}
+HOUSEHOLD_TOTAL = 50  # private households by size
+HOUSEHOLD = {"1": [51], "2": [52], "3": [53], "4": [54], "5+": [55]}
 
 ALL_IDS = sorted(
     {
@@ -75,8 +78,24 @@ ALL_IDS = sorted(
         HOUSING_TOTAL,
         OCCUPATION_TOTAL,
         LANGUAGE_TOTAL,
+        HOUSEHOLD_TOTAL,
     }
-    | {i for g in (AGE, HOUSING, OCCUPATION, LANGUAGE) for ids in g.values() for i in ids}
+    | {
+        i
+        for g in (AGE, HOUSING, OCCUPATION, LANGUAGE, COMMUTE, HOUSEHOLD)
+        for ids in g.values()
+        for i in ids
+    }
+)
+
+
+DIST_COLUMNS = (
+    "age_dist",
+    "housing_dist",
+    "occupation_dist",
+    "language_dist",
+    "commute_dist",
+    "household_dist",
 )
 
 
@@ -90,7 +109,7 @@ def ingest(eng: Engine, area: Area) -> int:
         crs=WGS84,
     )
     gdf["level"] = "DA"
-    for col in ("age_dist", "housing_dist", "occupation_dist", "language_dist"):
+    for col in DIST_COLUMNS:
         gdf[col] = gdf[col].map(lambda d: json.dumps(d) if d is not None else None)
     return upsert(eng, gdf, "census_areas", "dguid")
 
@@ -176,4 +195,6 @@ def _aggregate(v: dict[int, float]) -> dict:
         "housing_dist": dist(HOUSING, HOUSING_TOTAL),
         "occupation_dist": dist(OCCUPATION, OCCUPATION_TOTAL),
         "language_dist": dist(LANGUAGE, LANGUAGE_TOTAL),
+        "commute_dist": dist(COMMUTE, COMMUTE_TOTAL),
+        "household_dist": dist(HOUSEHOLD, HOUSEHOLD_TOTAL),
     }

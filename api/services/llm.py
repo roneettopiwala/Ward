@@ -36,6 +36,8 @@ async def complete_json[T: BaseModel](
     schema: type[T],
     check: Callable[[T], list[str]] | None = None,
     model: str | None = None,
+    timeout_s: float = TIMEOUT_S,
+    max_tokens: int = MAX_TOKENS,
 ) -> tuple[T, str]:
     """The model's reply parsed into `schema`, and the model that wrote it.
 
@@ -52,8 +54,8 @@ async def complete_json[T: BaseModel](
         response = await litellm.acompletion(
             model=model,
             messages=messages,
-            max_tokens=MAX_TOKENS,
-            timeout=TIMEOUT_S,
+            max_tokens=max_tokens,
+            timeout=timeout_s,
             api_key=settings.anthropic_api_key or None,
         )
         reply = response.choices[0].message.content or ""

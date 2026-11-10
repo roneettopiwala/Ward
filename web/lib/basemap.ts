@@ -28,7 +28,7 @@ export const BUILDINGS_3D_LAYER = "buildings-3d";
 
 const BUILDING_FOOTPRINT_LAYER = "buildings-footprint";
 const POI_HIT_LAYER = "poi-hit";
-const FONT = ["Noto Sans Regular"];
+export const FONT = ["Noto Sans Regular"];
 
 export const basemapSource: SourceSpecification = {
   type: "vector",

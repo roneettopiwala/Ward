@@ -11,6 +11,9 @@ export type MapTokens = {
   proposalPark: string;
   accent: string;
   bg: string;
+  support: string;
+  neutral: string;
+  oppose: string;
 };
 
 const cssVars: Record<keyof MapTokens, string> = {
@@ -25,6 +28,9 @@ const cssVars: Record<keyof MapTokens, string> = {
   proposalPark: "--color-map-proposal-park",
   accent: "--color-accent",
   bg: "--color-bg",
+  support: "--color-support",
+  neutral: "--color-neutral",
+  oppose: "--color-oppose",
 };
 
 export function readMapTokens(): MapTokens {

@@ -135,3 +135,48 @@ async def save_pros_cons(
 async def _write(conn: AsyncConnection, sql: str, **params: Any) -> None:
     await conn.execute(text(sql), params)
     await conn.commit()
+
+
+async def save_reaction(
+    conn: AsyncConnection,
+    proposal_id: uuid.UUID,
+    persona_id: str,
+    model: str,
+    stance: float,
+    reasons: list[str],
+    quote: str,
+    raw: dict[str, Any],
+    latency_ms: int,
+) -> None:
+    await _write(
+        conn,
+        """
+        INSERT INTO persona_reactions
+            (proposal_id, persona_id, model, stance, reasons, quote, raw, latency_ms)
+        VALUES (:id, :persona, :model, :stance, :reasons, :quote, CAST(:raw AS jsonb), :latency)
+        """,
+        id=proposal_id,
+        persona=uuid.UUID(persona_id),
+        model=model,
+        stance=stance,
+        reasons=reasons,
+        quote=quote,
+        raw=json.dumps(raw),
+        latency=latency_ms,
+    )
+
+
+async def clear_reactions(conn: AsyncConnection, proposal_id: uuid.UUID) -> None:
+    await _write(conn, "DELETE FROM persona_reactions WHERE proposal_id = :id", id=proposal_id)
+
+
+async def reaction_cards(conn: AsyncConnection, proposal_id: uuid.UUID) -> list[dict[str, Any]]:
+    """The persona cards saved for a proposal, in the order they arrived."""
+    rows = await conn.execute(
+        text(
+            "SELECT raw->'card' AS card FROM persona_reactions "
+            "WHERE proposal_id = :id ORDER BY created_at, id"
+        ),
+        {"id": proposal_id},
+    )
+    return [r.card for r in rows if r.card]

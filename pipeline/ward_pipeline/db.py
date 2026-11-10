@@ -49,6 +49,8 @@ _CASTS = {
         "housing_dist": "jsonb",
         "occupation_dist": "jsonb",
         "language_dist": "jsonb",
+        "commute_dist": "jsonb",
+        "household_dist": "jsonb",
     },
     "transit_stops": {"routes": "text[]"},
 }

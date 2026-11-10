@@ -7,8 +7,10 @@ import type {
   Fact,
   FactSheet,
   Fid,
+  PersonaCard,
   ProCon,
   Proposal,
+  Sentiment,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -122,10 +124,25 @@ type FactSheetEvent = {
   facts: Fact[];
 };
 
+type PersonaCardEvent = {
+  persona: Omit<PersonaCard["persona"], "basedOn"> & { based_on: string | null };
+  pin: [number, number];
+  distance_m: number;
+  bullets: string[];
+  stance: number;
+  stance_label: PersonaCard["stanceLabel"];
+  reasons: string[];
+  quote: string;
+  themes: string[];
+};
+
 export type AnalysisHandlers = {
   status: (status: string) => void;
   factSheet: (sheet: FactSheet) => void;
   prosCons: (pros: ProCon[], cons: ProCon[]) => void;
+  personas: (total: number) => void;
+  persona: (card: PersonaCard) => void;
+  sentiment: (sentiment: Sentiment) => void;
   done: () => void;
   error: (message: string) => void;
 };
@@ -150,6 +167,30 @@ export function streamAnalysis(serverId: string, on: AnalysisHandlers): () => vo
     const r = data<{ pros: ProCon[]; cons: ProCon[] }>(e);
     on.prosCons(r.pros, r.cons);
   });
+  source.addEventListener("personas", (e) => on.personas(data<{ total: number }>(e).total));
+  source.addEventListener("persona", (e) => {
+    const c = data<PersonaCardEvent>(e);
+    on.persona({
+      persona: {
+        id: c.persona.id,
+        name: c.persona.name,
+        age: c.persona.age,
+        role: c.persona.role,
+        occupation: c.persona.occupation,
+        tagline: c.persona.tagline,
+        basedOn: c.persona.based_on,
+      },
+      pin: c.pin,
+      distanceM: c.distance_m,
+      bullets: c.bullets,
+      stance: c.stance,
+      stanceLabel: c.stance_label,
+      reasons: c.reasons,
+      quote: c.quote,
+      themes: c.themes,
+    });
+  });
+  source.addEventListener("sentiment", (e) => on.sentiment(data<Sentiment>(e)));
   source.addEventListener("done", () => {
     finished = true;
     source.close();

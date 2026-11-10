@@ -1,4 +1,4 @@
-"""Ingest city data for an area: python -m ward_pipeline --area 165[,164,...]"""
+"""Ingest city data for an area: python -m ward_pipeline --area 165[,164,...] [--only census]"""
 
 import argparse
 import logging
@@ -26,6 +26,11 @@ def main() -> None:
         required=True,
         help="comma-separated City of Toronto neighbourhood numbers, e.g. 165",
     )
+    parser.add_argument(
+        "--only",
+        choices=["census"],
+        help="reload just this source (the others must already be loaded)",
+    )
     args = parser.parse_args()
     ids = sorted(int(x) for x in args.area.split(","))
 
@@ -39,6 +44,9 @@ def main() -> None:
 
     neighbourhoods.ingest(eng, area)
     census.ingest(eng, area)
+    if args.only:
+        log.info("done")
+        return
     osm_data = osm.fetch(area, cache_key="-".join(map(str, ids)))
     osm.ingest_pois(eng, osm_data)
     address_points = addresses.load(area)
