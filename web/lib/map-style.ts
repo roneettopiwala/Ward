@@ -9,10 +9,11 @@ import {
   basemapLayers,
   basemapSource,
   buildingsLayer,
+  FONT,
   labelLayers,
 } from "./basemap";
 import type { MapTokens } from "./tokens";
-import type { BaseFeature, CatalogType, Proposal } from "./types";
+import type { BaseFeature, CatalogType, PersonaCard, Proposal } from "./types";
 
 export const SELECTION_SOURCE = "selection";
 export const SELECTION_CORNERS_SOURCE = "selection-corners";
@@ -20,6 +21,8 @@ export const SELECTION_HIGHLIGHT_SOURCE = "selection-highlight";
 export const REMOVED_SOURCE = "removed";
 export const PROPOSALS_SOURCE = "proposals";
 export const IMPACT_SOURCE = "impact";
+export const PERSONAS_SOURCE = "personas";
+export const PERSONA_PINS_LAYER = "persona-pins";
 export const CORNER_IMAGE = "corner-handle";
 
 /** Height for a proposal whose type has no height (or isn't in the catalog). */
@@ -48,6 +51,7 @@ export function buildStyle(t: MapTokens): StyleSpecification {
       [SELECTION_HIGHLIGHT_SOURCE]: { type: "geojson", data: empty },
       [PROPOSALS_SOURCE]: { type: "geojson", data: empty },
       [IMPACT_SOURCE]: { type: "geojson", data: empty },
+      [PERSONAS_SOURCE]: { type: "geojson", data: empty },
     },
     layers: [
       ...basemapLayers(t),
@@ -124,7 +128,59 @@ export function buildStyle(t: MapTokens): StyleSpecification {
         layout: { "icon-image": CORNER_IMAGE, "icon-allow-overlap": true },
       },
       ...labelLayers(t),
+      {
+        id: PERSONA_PINS_LAYER,
+        type: "circle",
+        source: PERSONAS_SOURCE,
+        paint: {
+          "circle-color": [
+            "match",
+            ["get", "stance"],
+            "supports",
+            t.support,
+            "opposes",
+            t.oppose,
+            t.neutral,
+          ],
+          "circle-radius": ["case", ["get", "focused"], 13, 10],
+          "circle-stroke-color": ["case", ["get", "focused"], t.accent, t.bg],
+          "circle-stroke-width": ["case", ["get", "focused"], 2.5, 1.5],
+          "circle-pitch-alignment": "viewport",
+        },
+      },
+      {
+        id: "persona-initials",
+        type: "symbol",
+        source: PERSONAS_SOURCE,
+        layout: {
+          "text-field": ["get", "initial"],
+          "text-font": FONT,
+          "text-size": 11,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: { "text-color": t.bg },
+      },
     ],
+  };
+}
+
+/** A pin per persona, coloured by stance. */
+export function personasCollection(cards: PersonaCard[], focused: string | null): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: cards.map(
+      (c): Feature => ({
+        type: "Feature",
+        properties: {
+          id: c.persona.id,
+          initial: c.persona.name.charAt(0).toUpperCase(),
+          stance: c.stanceLabel,
+          focused: c.persona.id === focused,
+        },
+        geometry: { type: "Point", coordinates: c.pin },
+      }),
+    ),
   };
 }
 

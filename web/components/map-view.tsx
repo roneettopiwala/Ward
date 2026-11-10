@@ -2,7 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
+import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 
 import { fetchCatalog } from "@/lib/api";
@@ -20,6 +20,9 @@ import {
   cornerPoints,
   IMPACT_SOURCE,
   impactArea,
+  PERSONA_PINS_LAYER,
+  PERSONAS_SOURCE,
+  personasCollection,
   PROPOSALS_SOURCE,
   proposalsCollection,
   REMOVED_SOURCE,
@@ -34,6 +37,7 @@ import { type MapTokens, readMapTokens } from "@/lib/tokens";
 import type { Geometry, Proposal } from "@/lib/types";
 
 import MapControls from "./map-controls";
+import PersonaPins from "./persona-pins";
 import ResultsPanel from "./results-panel";
 import SelectionCard from "./selection-card";
 
@@ -96,7 +100,12 @@ export default function MapView() {
         m.addImage(CORNER_IMAGE, cornerImage(t));
         setMap(m);
       });
-      m.on("click", (e) => void selectAt(m, e.point));
+      m.on("click", (e: MapMouseEvent) => {
+        // A persona pin opens that persona's card instead of selecting a building.
+        const pin = m.queryRenderedFeatures(e.point, { layers: [PERSONA_PINS_LAYER] })[0];
+        if (pin) useMapStore.getState().focusPersona(String(pin.properties.id));
+        else void selectAt(m, e.point);
+      });
       m.on("mouseenter", BUILDINGS_3D_LAYER, () => (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", BUILDINGS_3D_LAYER, () => (m.getCanvas().style.cursor = ""));
     });
@@ -157,6 +166,12 @@ export default function MapView() {
           target ? impactArea(target.geometry, target.radiusM) : toCollection([]),
         );
       }
+
+      const cards = (s: State | undefined) =>
+        s?.activeProposal ? s.analyses[s.activeProposal]?.personas : undefined;
+      if (cards(state) !== cards(prev) || state.focusedPersona !== prev?.focusedPersona) {
+        source(PERSONAS_SOURCE)?.setData(personasCollection(cards(state) ?? [], state.focusedPersona));
+      }
     };
 
     sync(useMapStore.getState());
@@ -171,6 +186,7 @@ export default function MapView() {
         <>
           <SelectionCard map={map} />
           <MapControls map={map} />
+          <PersonaPins map={map} />
           <ResultsPanel />
         </>
       )}

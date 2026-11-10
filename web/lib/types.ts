@@ -100,7 +100,43 @@ export type ProCon = {
   sources: string[];
 };
 
-export type AnalysisStatus = "creating" | "analyzing" | "writing" | "done" | "error";
+export type Stance = "supports" | "neutral" | "opposes";
+
+/** One persona's reaction: who they are, how the proposal touches them, what they say. */
+export type PersonaCard = {
+  persona: {
+    id: string;
+    name: string;
+    age: number;
+    role: "resident" | "worker" | "visitor";
+    occupation: string;
+    tagline: string;
+    basedOn: string | null;
+  };
+  /** Where the persona shows on the map, and how far that is from the site. */
+  pin: [number, number];
+  distanceM: number;
+  /** Personal impact computed in code: "What shapes this view". */
+  bullets: string[];
+  stance: number;
+  stanceLabel: Stance;
+  reasons: string[];
+  quote: string;
+  themes: string[];
+};
+
+export type Sentiment = {
+  count: number;
+  mean: number;
+  /** Shares of personas, 0..1. */
+  support: number;
+  neutral: number;
+  oppose: number;
+  label: string;
+  themes: { theme: string; count: number; support: number; oppose: number }[];
+};
+
+export type AnalysisStatus = "creating" | "analyzing" | "writing" | "personas" | "done" | "error";
 
 /** A proposal's analysis as it streams in from the API. */
 export type Analysis = {
@@ -109,5 +145,9 @@ export type Analysis = {
   factSheet?: FactSheet;
   pros?: ProCon[];
   cons?: ProCon[];
+  /** How many personas are reacting, once they're chosen. */
+  personaTotal?: number;
+  personas?: PersonaCard[];
+  sentiment?: Sentiment;
   error?: string;
 };

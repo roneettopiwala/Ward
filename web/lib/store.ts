@@ -34,6 +34,8 @@ type MapState = Edits & {
   /** Analysis per proposal id, and the one the results panel shows. */
   analyses: Record<string, Analysis>;
   activeProposal: string | null;
+  /** The persona picked from a map pin or card, highlighted in both. */
+  focusedPersona: string | null;
 
   select: (feature: BaseFeature | null, status?: SelectionStatus) => void;
   /** Swap a pending selection for what it resolved to, if it is still selected. */
@@ -47,6 +49,7 @@ type MapState = Edits & {
   commitDraft: () => Proposal | null;
   updateAnalysis: (proposalId: string, patch: Partial<Analysis>) => void;
   closePanel: () => void;
+  focusPersona: (personaId: string | null) => void;
   undo: () => void;
 };
 
@@ -67,6 +70,7 @@ export const useMapStore = create<MapState>()((set, get) => ({
   draft: null,
   analyses: {},
   activeProposal: null,
+  focusedPersona: null,
 
   select: (feature, status = "ready") =>
     set((s) =>
@@ -141,6 +145,7 @@ export const useMapStore = create<MapState>()((set, get) => ({
       draft: null,
       analyses: { ...s.analyses, [proposal.id]: { status: "creating" } },
       activeProposal: proposal.id,
+      focusedPersona: null,
     });
     return proposal;
   },
@@ -150,7 +155,9 @@ export const useMapStore = create<MapState>()((set, get) => ({
       analyses: { ...s.analyses, [proposalId]: { ...s.analyses[proposalId], ...patch } },
     })),
 
-  closePanel: () => set({ activeProposal: null }),
+  closePanel: () => set({ activeProposal: null, focusedPersona: null }),
+
+  focusPersona: (focusedPersona) => set({ focusedPersona }),
 
   undo: () =>
     set((s) => {
@@ -163,6 +170,7 @@ export const useMapStore = create<MapState>()((set, get) => ({
         selected: null,
         draft: null,
         activeProposal: keepPanel ? s.activeProposal : null,
+        focusedPersona: keepPanel ? s.focusedPersona : null,
       };
     }),
 }));
