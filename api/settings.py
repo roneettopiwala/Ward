@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     anthropic_api_key: str = ""
     llm_model: str = "anthropic/claude-opus-5-5"
+    # Writes persona backstories, once per neighbourhood.
+    persona_model: str = "anthropic/claude-sonnet-5-5"
+    # Every persona reaction (fast, called in parallel). Stored on each persona.
+    reaction_model: str = "anthropic/claude-haiku-5-5"
 
 
 @lru_cache
