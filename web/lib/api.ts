@@ -7,6 +7,8 @@ import type {
   Fact,
   FactSheet,
   Fid,
+  ParseResult,
+  Part,
   PersonaCard,
   ProCon,
   Proposal,
@@ -82,7 +84,58 @@ type CatalogResponse = {
   params: Record<string, CatalogParam>;
   render: { kind: CatalogType["render"]["kind"]; color: string; height_param: string | null };
   impact_radius_m: number;
+  storey_m: number | null;
 }[];
+
+export type ParseRequest = {
+  prompt: string;
+  geometryType: string;
+  selection: {
+    name: string | null;
+    use: string | null;
+    heightM: number | null;
+    lotAreaM2: number | null;
+    zoning: string | null;
+  };
+  /** The proposal being changed, for follow-up prompts. */
+  current?: Part[];
+};
+
+/** Turn a typed prompt into proposal parts. Throws with the API's message on failure. */
+export async function parsePrompt(req: ParseRequest): Promise<ParseResult> {
+  const res = await fetch(`${API_URL}/proposals/parse`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      prompt: req.prompt,
+      geometry_type: req.geometryType,
+      selection: {
+        name: req.selection.name,
+        use: req.selection.use,
+        height_m: req.selection.heightM,
+        lot_area_m2: req.selection.lotAreaM2,
+        zoning: req.selection.zoning,
+      },
+      current: req.current,
+    }),
+  });
+  if (!res.ok) {
+    const detail = ((await res.json().catch(() => ({}))) as { detail?: unknown }).detail;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+  }
+  const r = (await res.json()) as {
+    parts: Part[];
+    replaces_existing: boolean;
+    assumptions: string[];
+    clarification: string | null;
+  };
+  return {
+    parts: r.parts,
+    replacesExisting: r.replaces_existing,
+    assumptions: r.assumptions,
+    clarification: r.clarification,
+  };
+}
 
 export async function fetchCatalog(): Promise<CatalogType[]> {
   const res = await fetch(`${API_URL}/catalog`);
@@ -95,19 +148,25 @@ export async function fetchCatalog(): Promise<CatalogType[]> {
     params: t.params,
     render: { kind: t.render.kind, color: t.render.color, heightParam: t.render.height_param },
     impactRadiusM: t.impact_radius_m,
+    storeyM: t.storey_m,
   }));
 }
 
 /** Store a proposal; returns the server's id. */
-export async function createProposal(p: Proposal): Promise<string> {
+/** Store a proposal; `parentServerId` links a new version to the one it changes. */
+export async function createProposal(p: Proposal, parentServerId?: string): Promise<string> {
   const res = await fetch(`${API_URL}/proposals`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      type: p.type,
-      params: p.params,
+      // The API picks the main part for type/params; components carry every part.
+      type: p.parts[0].type,
+      params: p.parts[0].params,
+      components: p.parts,
       geometry: p.geometry,
       replaces: p.replaces,
+      prompt: p.prompt,
+      parent_id: parentServerId ?? null,
     }),
   });
   if (!res.ok) {

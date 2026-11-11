@@ -98,7 +98,7 @@ async def react(p: Persona, impact: PersonalImpact, sheet: FactSheet) -> Persona
         "proposal": {
             "type": sheet.type_label,
             "site": sheet.site_name,
-            "params": sheet.params,
+            "parts_bottom_to_top": [p.model_dump() for p in sheet.parts] or sheet.params,
             "impact_radius_m": sheet.impact_radius_m,
         },
         "how_it_affects_you": impact.bullets,

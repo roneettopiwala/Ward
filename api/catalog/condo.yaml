@@ -1,6 +1,9 @@
 # A residential tower on a lot.
 type: condo
 label: Condo tower
+description: >-
+  Homes in a multi-storey building: condos, rental apartments, affordable or
+  student housing, seniors' residences.
 geometry: polygon
 params:
   height_m:

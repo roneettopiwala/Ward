@@ -32,6 +32,7 @@
   --color-map-label: #6b6f77;
   --color-map-removed: #8a8d95;
   --color-map-proposal-park: #4e6b2a;
+  --color-map-proposal-retail: #8fae2c;
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;

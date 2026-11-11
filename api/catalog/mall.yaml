@@ -1,6 +1,9 @@
 # An enclosed shopping centre.
 type: mall
 label: Mall
+description: >-
+  Retail and commercial floor space: shopping centres, shops, grocery stores,
+  food halls, restaurants, retail podiums under towers.
 geometry: polygon
 params:
   height_m:
@@ -14,7 +17,7 @@ params:
 render:
   kind: extrusion
   height_param: height_m
-  color: accent
+  color: proposalRetail
 impact_radius_m: 500
 storey_m: 5
 impact_metrics:

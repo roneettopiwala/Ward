@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
@@ -7,10 +8,11 @@ from pydantic import BaseModel
 from sse_starlette import EventSourceResponse
 
 from routes.features import Conn
-from services import proposals
+from services import llm, parse, proposals
 from services.analysis import analyze
 from services.catalog import TypeDef, catalog
-from services.facts import ProposalInput
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["proposals"])
 
@@ -25,8 +27,24 @@ async def get_catalog() -> list[TypeDef]:
     return list(catalog().values())
 
 
+@router.post("/proposals/parse")
+async def parse_prompt(body: parse.ParseRequest) -> parse.ParseResult:
+    """A typed prompt (and the current proposal, for follow-ups) as catalog parts."""
+    try:
+        return await parse.parse(body)
+    except llm.LLMError as e:
+        raise HTTPException(
+            422, "Couldn't turn that into a proposal. Try describing it differently."
+        ) from e
+    except Exception as e:
+        # Network, key or provider errors: answer cleanly so the browser shows a
+        # message (an unhandled 500 carries no CORS headers and looks like a CORS error).
+        log.exception("prompt parsing failed")
+        raise HTTPException(503, llm.friendly_error(e)) from e
+
+
 @router.post("/proposals", status_code=201)
-async def create_proposal(conn: Conn, body: ProposalInput) -> ProposalCreated:
+async def create_proposal(conn: Conn, body: proposals.ProposalCreate) -> ProposalCreated:
     """Validate and store a proposal. Analysis streams from /proposals/{id}/events."""
     try:
         new_id = await proposals.create(conn, body)

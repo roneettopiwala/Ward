@@ -26,7 +26,10 @@ export async function analyzeProposal(proposal: Proposal): Promise<void> {
   });
   let serverId: string;
   try {
-    serverId = await createProposal(proposal);
+    const parentServerId = proposal.parentId
+      ? useMapStore.getState().analyses[proposal.parentId]?.serverId
+      : undefined;
+    serverId = await createProposal(proposal, parentServerId);
   } catch (e) {
     update({ status: "error", error: `Couldn't save the proposal: ${(e as Error).message}` });
     return;

@@ -1,6 +1,9 @@
 # A public park at ground level.
 type: park
 label: Park
+description: >-
+  Open green space: a public park covering the whole site, or a rooftop park
+  or garden on top of a building.
 geometry: polygon
 params: {}
 render:

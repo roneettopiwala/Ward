@@ -19,8 +19,8 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from services import impact, personas, proposals, reactions
-from services.catalog import TypeDef, catalog
+from services import impact, llm, personas, proposals, reactions
+from services.catalog import Stack
 from services.facts import FactSheet, ProposalInput, build_fact_sheet
 from services.pros_cons import ProsConsResult, generate
 from settings import get_settings
@@ -50,8 +50,7 @@ def cache_key(proposal: ProposalInput) -> str:
     geometry = hashlib.sha256(json.dumps(proposal.geometry, sort_keys=True).encode()).hexdigest()
     key = json.dumps(
         {
-            "type": proposal.type,
-            "params": proposal.params,
+            "parts": [part.model_dump() for part in proposal.parts()],
             "replaces": sorted(proposal.replaces),
             "geometry": geometry,
             "model": get_settings().llm_model,
@@ -78,14 +77,14 @@ async def analyze(
         await proposals.set_status(conn, proposal_id, "analyzing")
         yield AnalysisEvent(event="status", data={"status": "analyzing"})
         try:
-            typedef = catalog()[stored.proposal.type]
+            stack = Stack.of(stored.proposal.parts())
             key = cache_key(stored.proposal)
             cached = await redis.get(key)
             hit = json.loads(cached) if cached else None
             if hit:
                 sheet = FactSheet.model_validate(hit["fact_sheet"])
             else:
-                sheet = await build_fact_sheet(conn, stored.proposal, typedef)
+                sheet = await build_fact_sheet(conn, stored.proposal)
             await proposals.save_fact_sheet(conn, proposal_id, sheet)
             yield _sheet_event(sheet)
 
@@ -107,7 +106,7 @@ async def analyze(
                 await emit(_pros_cons_event(result))
 
             async def persona_reactions(emit: Emit) -> None:
-                await _personas(engine, proposal_id, stored.proposal, typedef, sheet, emit)
+                await _personas(engine, proposal_id, stored.proposal, stack, sheet, emit)
 
             async for e in _merge(pros_cons, persona_reactions):
                 yield e
@@ -124,7 +123,7 @@ async def _personas(
     engine: AsyncEngine,
     proposal_id: uuid.UUID,
     proposal: ProposalInput,
-    typedef: TypeDef,
+    stack: Stack,
     sheet: FactSheet,
     emit: Emit,
 ) -> None:
@@ -137,11 +136,11 @@ async def _personas(
     if not ready:
         await emit(_status("generating personas"))
         ready, _ = await personas.ensure(engine, nid)
-    chosen = personas.select(ready, typedef.relevant_to)
+    chosen = personas.select(ready, stack.relevant_to)
 
     async with engine.connect() as conn:
         impacts = await impact.compute(
-            conn, chosen, proposal.geometry, proposal.replaces, typedef.impact_radius_m
+            conn, chosen, proposal.geometry, proposal.replaces, stack.impact_radius_m
         )
         await proposals.clear_reactions(conn, proposal_id)
         await emit(AnalysisEvent(event="personas", data={"total": len(chosen)}))
@@ -235,10 +234,10 @@ def _pros_cons_event(result: ProsConsResult) -> AnalysisEvent:
 def _message(e: Exception) -> str:
     """Short, safe text for the panel; details stay in the server log."""
     name = type(e).__name__
-    if "AuthenticationError" in name:
-        return "The LLM API key is missing or invalid (ANTHROPIC_API_KEY in api/.env)."
     if isinstance(e, PersonaError):
         return str(e)
     if "LLMError" in name:
         return "A model's reply didn't pass validation, even after a retry."
+    if type(e).__module__.startswith("litellm"):
+        return llm.friendly_error(e)
     return "Analysis failed. See the API log for details."

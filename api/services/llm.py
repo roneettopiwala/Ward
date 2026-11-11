@@ -26,6 +26,21 @@ class LLMError(Exception):
     pass
 
 
+def friendly_error(e: Exception) -> str:
+    """Short, safe text for the UI about a failed LLM call; details stay in the log."""
+    name = type(e).__name__
+    text = str(e)
+    if "AuthenticationError" in name:
+        return "The LLM API key is missing or invalid (ANTHROPIC_API_KEY in api/.env)."
+    if "name resolution" in text or "Cannot connect" in text or "APIConnectionError" in name:
+        return "Couldn't reach the language model. Check your internet connection and try again."
+    if "RateLimit" in name:
+        return "The language model is busy (rate limited). Wait a moment and try again."
+    if "Timeout" in name:
+        return "The language model took too long to answer. Try again."
+    return "Something went wrong reading that prompt. See the API log for details."
+
+
 def prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.md").read_text()
 
