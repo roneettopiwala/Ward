@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from services.catalog import TypeDef
+from services.catalog import Part, Stack
 
 NEIGHBOUR_RADIUS_M = 250
 SUBWAY_SEARCH_M = 1500
@@ -57,7 +57,9 @@ class Fact(BaseModel):
 class FactSheet(BaseModel):
     type: str
     type_label: str
+    """E.g. "Mall (food hall) + Rooftop park"."""
     params: dict[str, float]
+    parts: list[Part] = []
     impact_radius_m: float
     site_name: str
     facts: list[Fact]
@@ -70,28 +72,33 @@ class ProposalInput(BaseModel):
     """What analysis needs: the structured proposal, no ids or UI state."""
 
     type: str
+    """The main part's type; `components` has every part when there are several."""
     params: dict[str, float]
     geometry: dict[str, Any]
     replaces: list[str] = []
+    components: list[Part] = []
+    """All parts, bottom to top, for mixed use or tagged parts. Empty: one plain part."""
+
+    def parts(self) -> list[Part]:
+        return self.components or [Part(type=self.type, params=self.params)]
 
 
 @dataclass
 class Context:
     conn: AsyncConnection
     proposal: ProposalInput
-    typedef: TypeDef
+    stack: Stack
     facts: list[Fact] = field(default_factory=list)
     values: dict[str, Any] = field(default_factory=dict)
     """Intermediate numbers later metrics build on (population, park area...)."""
 
     @property
     def radius(self) -> float:
-        return self.typedef.impact_radius_m
+        return self.stack.impact_radius_m
 
     @property
     def height_m(self) -> float | None:
-        param = self.typedef.render.height_param
-        return self.proposal.params.get(param) if param else None
+        return self.stack.height_m
 
     def add(
         self,
@@ -188,12 +195,24 @@ async def site(ctx: Context) -> None:
     ctx.add("site.area_m2", "Site area", r.area, SOURCE_PROPOSAL, "m²")
     if r.hood:
         ctx.add("site.neighbourhood", "Neighbourhood", r.hood, SOURCE_PROPOSAL)
+    stack = ctx.stack
+    if stack.mixed or any(p.tags for p, _ in stack.parts):
+        ctx.add("proposal.parts", "Proposed uses, bottom to top", stack.label, SOURCE_PROPOSAL)
     if ctx.height_m is not None:
         ctx.add("proposal.height_m", "Proposed height", ctx.height_m, SOURCE_PROPOSAL, "m")
-        if ctx.typedef.storey_m:
-            storeys = max(1, round(ctx.height_m / ctx.typedef.storey_m))
-            ctx.values["storeys"] = storeys
-            ctx.add("proposal.storeys", "Proposed storeys", storeys, SOURCE_PROPOSAL, "storeys")
+        if stack.storeys:
+            ctx.values["storeys"] = stack.storeys
+            ctx.add(
+                "proposal.storeys", "Proposed storeys", stack.storeys, SOURCE_PROPOSAL, "storeys"
+            )
+    if stack.roof_parks:
+        ctx.add(
+            "proposal.rooftop_park_m2",
+            "Rooftop park area (public access not known, so not counted as parkland)",
+            r.area,
+            SOURCE_PROPOSAL,
+            "m²",
+        )
 
 
 async def zoning_fit(ctx: Context) -> None:
@@ -215,13 +234,16 @@ async def zoning_fit(ctx: Context) -> None:
     ctx.add("zoning.code", "Zoning", r.zone_code, SOURCE_ZONING)
     if r.zone_class:
         ctx.add("zoning.class", "Zone class", r.zone_class, SOURCE_ZONING)
-        fits = r.zone_class in ZONE_FITS.get(ctx.typedef.type, set())
-        ctx.add(
-            "zoning.use_fits",
-            f"Zone class broadly permits a {ctx.typedef.label.lower()}",
-            "yes" if fits else "no",
-            SOURCE_ZONING,
-        )
+        for _, t in ctx.stack.parts:
+            if ctx.stack.mixed and t.render.kind == "flat":
+                continue  # a rooftop park is part of the building, not a land use
+            fits = r.zone_class in ZONE_FITS.get(t.type, set())
+            ctx.add(
+                f"zoning.use_fits.{t.type}",
+                f"Zone class broadly permits a {t.label.lower()}",
+                "yes" if fits else "no",
+                SOURCE_ZONING,
+            )
     if r.max_height_m and ctx.height_m is not None:
         ctx.add("zoning.max_height_m", "Zoning height limit", r.max_height_m, SOURCE_ZONING, "m")
         over = ctx.height_m - r.max_height_m
@@ -342,7 +364,7 @@ async def parks(ctx: Context) -> None:
     if nearest:
         ctx.add("parks.nearest_name", "Nearest park", nearest.name, SOURCE_PARKS)
         ctx.add("parks.nearest_m", "Distance to nearest park", nearest.d, SOURCE_PARKS, "m")
-    if ctx.typedef.type == "park":
+    if ctx.stack.site_park:
         added = ctx.values["site_area"]
         ctx.add("proposal.park_area_m2", "New park area", added, SOURCE_PROPOSAL, "m²")
         if r.area:
@@ -462,7 +484,7 @@ async def population(ctx: Context) -> None:
 
 
 async def homes_added(ctx: Context) -> None:
-    units = ctx.proposal.params.get("units")
+    units = ctx.stack.units
     if units is None:
         return
     ctx.add("proposal.homes", "New homes", units, SOURCE_PROPOSAL, "homes")
@@ -507,6 +529,20 @@ async def floor_area(ctx: Context) -> None:
             SOURCE_PROPOSAL,
             "m²",
         )
+    if not ctx.stack.mixed:
+        return
+    for part, t in ctx.stack.parts:
+        height = ctx.stack.part_height(part, t)
+        if height and t.storey_m:
+            part_storeys = max(1, round(height / t.storey_m))
+            ctx.add(
+                f"proposal.floor_area_m2.{t.type}",
+                f"{ctx.stack.part_label(part, t)} floor area "
+                f"({part_storeys} storey{'' if part_storeys == 1 else 's'})",
+                round(ctx.values["site_area"] * part_storeys, -2),
+                SOURCE_PROPOSAL,
+                "m²",
+            )
 
 
 async def green_space_per_resident(ctx: Context) -> None:
@@ -524,7 +560,7 @@ async def green_space_per_resident(ctx: Context) -> None:
         "m²",
     )
     after = None
-    if ctx.typedef.type == "park":
+    if ctx.stack.site_park:
         after = (park_area + ctx.values["site_area"]) / people
     elif ctx.values.get("new_residents"):
         after = park_area / (people + ctx.values["new_residents"])
@@ -560,23 +596,26 @@ METRICS: dict[str, Callable[[Context], Awaitable[None]]] = {
 }
 
 
-async def build_fact_sheet(
-    conn: AsyncConnection, proposal: ProposalInput, typedef: TypeDef
-) -> FactSheet:
-    ctx = Context(conn, proposal, typedef)
-    needed = list(typedef.impact_metrics)
+async def build_fact_sheet(conn: AsyncConnection, proposal: ProposalInput) -> FactSheet:
+    stack = Stack.of(proposal.parts())
+    ctx = Context(conn, proposal, stack)
+    wanted = set(stack.impact_metrics)
     # Green space per resident builds on parks and population.
-    if "green_space_per_resident" in needed and "parks" not in needed:
-        needed.insert(needed.index("green_space_per_resident"), "parks")
+    if "green_space_per_resident" in wanted:
+        wanted |= {"parks", "population"}
+    # Every part's metrics, in the one order dependencies need (METRICS order).
+    needed = [name for name in METRICS if name in wanted]
     for name in needed:
         await METRICS[name](ctx)
     names = {f.id: f.display for f in ctx.facts}
     site_name = names.get("replaced.name") or names.get("site.neighbourhood") or "Selected site"
+    main, main_type = stack.main
     return FactSheet(
-        type=typedef.type,
-        type_label=typedef.label,
-        params=proposal.params,
-        impact_radius_m=typedef.impact_radius_m,
+        type=main_type.type,
+        type_label=stack.label,
+        params=main.params,
+        parts=[p for p, _ in stack.parts],
+        impact_radius_m=stack.impact_radius_m,
         site_name=site_name,
         facts=ctx.facts,
     )

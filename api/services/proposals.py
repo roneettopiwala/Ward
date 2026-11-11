@@ -8,13 +8,24 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from services.catalog import GEOMETRY_TYPES, catalog
+from services.catalog import GEOMETRY_TYPES, Part, Stack, catalog
 from services.facts import FactSheet, ProposalInput
 from services.pros_cons import ProsConsResult
 
 
 class ProposalError(ValueError):
     pass
+
+
+MAX_PARTS = 4
+
+
+class ProposalCreate(ProposalInput):
+    """A new proposal, with where it came from."""
+
+    prompt: str | None = None
+    parent_id: uuid.UUID | None = None
+    """The proposal this one refines."""
 
 
 class StoredProposal(BaseModel):
@@ -25,21 +36,39 @@ class StoredProposal(BaseModel):
     pros_cons: ProsConsResult | None
 
 
-def validate(raw: ProposalInput) -> ProposalInput:
-    """The proposal with params resolved against the catalog. Raises ProposalError."""
-    typedef = catalog().get(raw.type)
-    if typedef is None:
-        raise ProposalError(f"unknown type {raw.type!r}")
-    if raw.geometry.get("type") not in GEOMETRY_TYPES[typedef.geometry]:
-        raise ProposalError(f"{raw.type} needs {typedef.geometry} geometry")
-    try:
-        params = typedef.resolve_params(raw.params)
-    except ValueError as e:
-        raise ProposalError(str(e)) from e
-    return raw.model_copy(update={"params": params})
+def validate_parts(parts: list[Part], geometry_type: str | None) -> list[Part]:
+    """Parts with params resolved against the catalog. Raises ProposalError."""
+    if not 1 <= len(parts) <= MAX_PARTS:
+        raise ProposalError(f"a proposal has 1 to {MAX_PARTS} parts")
+    out = []
+    for i, part in enumerate(parts):
+        typedef = catalog().get(part.type)
+        if typedef is None:
+            raise ProposalError(f"unknown type {part.type!r}")
+        if geometry_type not in GEOMETRY_TYPES[typedef.geometry]:
+            raise ProposalError(f"{part.type} needs {typedef.geometry} geometry")
+        if typedef.render.kind == "flat" and len(parts) > 1 and i != len(parts) - 1:
+            raise ProposalError(f"a {part.type} in a mixed-use proposal goes on the roof (last)")
+        try:
+            params = typedef.resolve_params(part.params)
+        except ValueError as e:
+            raise ProposalError(f"{part.type}: {e}") from e
+        tags = [t.strip()[:40] for t in part.tags if t.strip()][:4]
+        out.append(Part(type=part.type, params=params, tags=tags))
+    return out
 
 
-async def create(conn: AsyncConnection, raw: ProposalInput) -> uuid.UUID:
+def validate[P: ProposalInput](raw: P) -> P:
+    """The proposal with every part resolved; type/params become the main part's."""
+    parts = validate_parts(raw.parts(), raw.geometry.get("type"))
+    main, _ = Stack.of(parts).main
+    plain = len(parts) == 1 and not parts[0].tags
+    return raw.model_copy(
+        update={"type": main.type, "params": main.params, "components": [] if plain else parts}
+    )
+
+
+async def create(conn: AsyncConnection, raw: ProposalCreate) -> uuid.UUID:
     proposal = validate(raw)
     geojson = json.dumps(proposal.geometry)
     valid = await conn.scalar(text("SELECT ST_IsValid(ST_GeomFromGeoJSON(:g))"), {"g": geojson})
@@ -48,17 +77,20 @@ async def create(conn: AsyncConnection, raw: ProposalInput) -> uuid.UUID:
     new_id = await conn.scalar(
         text(
             """
-            INSERT INTO proposals (type, params, replaces, geom)
-            VALUES (:type, CAST(:params AS jsonb), :replaces,
-                    ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326))
+            INSERT INTO proposals (type, params, components, replaces, geom, prompt, parent_id)
+            VALUES (:type, CAST(:params AS jsonb), CAST(:components AS jsonb), :replaces,
+                    ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326), :prompt, :parent)
             RETURNING id
             """
         ),
         {
             "type": proposal.type,
             "params": json.dumps(proposal.params),
+            "components": json.dumps([c.model_dump() for c in proposal.components] or None),
             "replaces": proposal.replaces,
             "g": geojson,
+            "prompt": proposal.prompt,
+            "parent": proposal.parent_id,
         },
     )
     await conn.commit()
@@ -70,7 +102,7 @@ async def get(conn: AsyncConnection, proposal_id: uuid.UUID) -> StoredProposal |
         await conn.execute(
             text(
                 """
-                SELECT p.id, p.status, p.type, p.params, p.replaces, p.fact_sheet,
+                SELECT p.id, p.status, p.type, p.params, p.components, p.replaces, p.fact_sheet,
                        ST_AsGeoJSON(p.geom) AS geometry, pc.pros, pc.cons, pc.model
                 FROM proposals p LEFT JOIN pros_cons pc ON pc.proposal_id = p.id
                 WHERE p.id = :id
@@ -94,6 +126,7 @@ async def get(conn: AsyncConnection, proposal_id: uuid.UUID) -> StoredProposal |
             params=row.params or {},
             geometry=json.loads(row.geometry),
             replaces=row.replaces or [],
+            components=row.components or [],
         ),
         fact_sheet=FactSheet.model_validate(row.fact_sheet) if row.fact_sheet else None,
         pros_cons=pros_cons,
