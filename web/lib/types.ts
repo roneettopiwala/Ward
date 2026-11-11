@@ -45,12 +45,26 @@ export type SelectionStatus = "loading" | "ready" | "outside-area" | "not-found"
  * A proposed change. Plain data so a parsed prompt can create one later.
  * Geometry may be any type: areas, lines and points are all coming.
  */
-export type Proposal = {
-  id: string;
+/** One part of a proposal (a catalog type with its params), e.g. a retail podium. */
+export type Part = {
   type: string;
   params: Record<string, number>;
+  /** What it is beyond its catalog type, e.g. ["food hall"]. */
+  tags: string[];
+};
+
+export type Proposal = {
+  id: string;
+  /** Bottom to top; a flat part (park) sits on the roof when there are several. */
+  parts: Part[];
   geometry: Geometry;
   replaces: Fid[];
+  /** What the user typed, when it came from the prompt bar. */
+  prompt: string | null;
+  assumptions: string[];
+  /** The version this one changes, and its number (1 for a first proposal). */
+  parentId: string | null;
+  version: number;
 };
 
 /** A buildable type from the catalog (api/catalog/*.yaml). */
@@ -66,6 +80,8 @@ export type CatalogType = {
     heightParam: string | null;
   };
   impactRadiusM: number;
+  /** Metres per storey, for types with a height. */
+  storeyM: number | null;
 };
 
 export type CatalogParam = {
@@ -134,6 +150,15 @@ export type Sentiment = {
   oppose: number;
   label: string;
   themes: { theme: string; count: number; support: number; oppose: number }[];
+};
+
+/** The prompt parser's reading of what the user typed. */
+export type ParseResult = {
+  parts: Part[];
+  replacesExisting: boolean;
+  assumptions: string[];
+  /** Set (with no parts) when the parser needs a question answered. */
+  clarification: string | null;
 };
 
 export type AnalysisStatus = "creating" | "analyzing" | "writing" | "personas" | "done" | "error";

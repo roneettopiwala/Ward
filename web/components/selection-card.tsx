@@ -1,13 +1,12 @@
 "use client";
 
 import bbox from "@turf/bbox";
-import { ArrowRight, X } from "lucide-react";
+import { ArrowDown, X } from "lucide-react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useState } from "react";
 
-import { analyzeProposal } from "@/lib/analysis";
-import { type Draft, useMapStore } from "@/lib/store";
-import type { BaseFeature, CatalogType, SelectionStatus, TransitStop, Zoning } from "@/lib/types";
+import { useMapStore } from "@/lib/store";
+import type { BaseFeature, SelectionStatus, TransitStop, Zoning } from "@/lib/types";
 
 const CARD_WIDTH = 320;
 const GAP = 16;
@@ -28,7 +27,8 @@ function anchorFor(map: MapLibreMap, feature: BaseFeature): { left: number; top:
   const left = fitsRight ? point.x + GAP : point.x - GAP - CARD_WIDTH;
   return {
     left: Math.min(Math.max(left, EDGE), clientWidth - CARD_WIDTH - EDGE),
-    top: Math.min(Math.max(point.y - 110, 88), clientHeight - 480),
+    // Clear of the prompt bar at the bottom (up to about 200 px with a question showing).
+    top: Math.min(Math.max(point.y - 110, 88), clientHeight - 660),
   };
 }
 
@@ -38,7 +38,7 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function zoningText(zoning: Zoning | null): string {
+export function zoningText(zoning: Zoning | null): string {
   if (!zoning) return "Not in By-law 569-2013";
   return zoning.maxHeightM ? `${zoning.code} · max ${zoning.maxHeightM} m` : zoning.code;
 }
@@ -88,99 +88,12 @@ function Stops({ stops }: { stops: TransitStop[] }) {
   );
 }
 
-function formatParam(value: number, unit: string | null): string {
-  return unit ? `${number.format(value)} ${unit}` : number.format(value);
-}
-
-/** Pick what replaces the building, with the type's main settings. Temporary until Phase 5. */
-function TypePicker({ catalog, draft }: { catalog: CatalogType[]; draft: Draft }) {
-  const setDraft = useMapStore((s) => s.setDraft);
-  const cancelDraft = useMapStore((s) => s.cancelDraft);
-  const commitDraft = useMapStore((s) => s.commitDraft);
-  const type = catalog.find((t) => t.type === draft.type);
-  const params = type ? Object.entries(type.params).filter(([, p]) => p.main) : [];
-
-  return (
-    <>
-      <div className="mt-4">
-        <Label>Replace with</Label>
-        <div role="radiogroup" className="mt-2 flex flex-wrap gap-2">
-          {catalog.map((t) => (
-            <button
-              key={t.type}
-              type="button"
-              role="radio"
-              aria-checked={t.type === draft.type}
-              onClick={() => setDraft({ type: t.type })}
-              className={`h-9 rounded-control border px-3 text-sm ${
-                t.type === draft.type
-                  ? "border-accent bg-surface-raised text-fg"
-                  : "border-border-strong text-fg-muted hover:bg-surface-raised"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <Label>Parameters</Label>
-        {params.length === 0 && (
-          <p className="mt-1.5 text-sm text-fg-subtle">Nothing to set; it covers the whole site.</p>
-        )}
-        {params.map(([name, p]) => (
-          <label key={name} className="mt-2 block">
-            <span className="flex justify-between text-sm">
-              {p.label}
-              <span className="font-mono text-fg-muted">
-                {formatParam(draft.params[name] ?? p.default, p.unit)}
-              </span>
-            </span>
-            <input
-              type="range"
-              min={p.min}
-              max={p.max}
-              step={p.step}
-              value={draft.params[name] ?? p.default}
-              onChange={(e) => setDraft({ params: { [name]: Number(e.target.value) } })}
-              className="mt-1 w-full accent-accent"
-            />
-          </label>
-        ))}
-      </div>
-
-      <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={cancelDraft}
-          className="h-10 rounded-control border border-border-strong px-4 text-sm hover:bg-surface-raised"
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            const proposal = commitDraft();
-            if (proposal) void analyzeProposal(proposal);
-          }}
-          className="flex h-10 flex-1 items-center justify-center gap-2 rounded-control bg-accent text-sm font-semibold text-accent-fg hover:brightness-95"
-        >
-          Analyze <ArrowRight className="size-4" />
-        </button>
-      </div>
-    </>
-  );
-}
-
 export default function SelectionCard({ map }: { map: MapLibreMap }) {
   const feature = useMapStore((s) => (s.selected ? s.features[s.selected] : null));
   const status = useMapStore((s) => s.selectionStatus);
   const select = useMapStore((s) => s.select);
   const remove = useMapStore((s) => s.remove);
-  const catalog = useMapStore((s) => s.catalog);
   const draft = useMapStore((s) => s.draft);
-  const startDraft = useMapStore((s) => s.startDraft);
   const [, rerender] = useState(0);
 
   useEffect(() => {
@@ -191,12 +104,12 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
     };
   }, [map]);
 
-  if (!feature) return null;
+  // While a preview is open, the preview card takes over.
+  if (!feature || draft) return null;
   const { left, top } = anchorFor(map, feature);
   const loading = status === "loading";
   const details = feature.details;
   const notice = NOTICES[status];
-  const picking = draft?.fid === feature.fid;
 
   return (
     <section
@@ -208,7 +121,7 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
       <header className="flex items-center justify-between">
         <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-fg-subtle">
           <span className="size-2 bg-accent" />
-          {picking ? "Replace · Draft" : "Selected · Existing"}
+          Selected · Existing
         </p>
         <button
           type="button"
@@ -228,47 +141,31 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
       )}
       {notice && <p className="mt-2 text-sm text-fg-subtle">{notice}</p>}
 
-      {picking ? (
-        <TypePicker catalog={catalog} draft={draft} />
-      ) : (
-        <>
-          <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
-            <Field label="Use" value={feature.use ? capitalize(feature.use) : "—"} loading={loading} />
-            <Field
-              label="Height"
-              value={feature.heightM ? `${feature.heightM} m` : "—"}
-              loading={loading}
-            />
-            <Field
-              label="Lot area"
-              value={details?.lotAreaM2 ? `${number.format(details.lotAreaM2)} m²` : "—"}
-              loading={loading}
-            />
-            <Field label="Zoning" value={details ? zoningText(details.zoning) : "—"} loading={loading} />
-          </dl>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+        <Field label="Use" value={feature.use ? capitalize(feature.use) : "—"} loading={loading} />
+        <Field label="Height" value={feature.heightM ? `${feature.heightM} m` : "—"} loading={loading} />
+        <Field
+          label="Lot area"
+          value={details?.lotAreaM2 ? `${number.format(details.lotAreaM2)} m²` : "—"}
+          loading={loading}
+        />
+        <Field label="Zoning" value={details ? zoningText(details.zoning) : "—"} loading={loading} />
+      </dl>
 
-          {details && <Stops stops={details.nearestStops} />}
+      {details && <Stops stops={details.nearestStops} />}
 
-          <div className="mt-4 flex gap-2">
-            <button
-              type="button"
-              onClick={() => remove(feature.fid)}
-              className="h-10 rounded-control border border-border-strong px-4 text-sm hover:bg-surface-raised"
-            >
-              Remove
-            </button>
-            <button
-              type="button"
-              disabled={catalog.length === 0 || loading}
-              title={catalog.length === 0 ? "The type catalog hasn't loaded; is the API running?" : undefined}
-              onClick={() => startDraft(feature.fid)}
-              className="flex h-10 flex-1 items-center justify-center gap-2 rounded-control bg-accent text-sm font-semibold text-accent-fg hover:brightness-95 disabled:opacity-40"
-            >
-              Replace <ArrowRight className="size-4" />
-            </button>
-          </div>
-        </>
-      )}
+      <div className="mt-4 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs text-fg-subtle">
+          <ArrowDown className="size-3.5" /> Describe what to build in the bar below
+        </p>
+        <button
+          type="button"
+          onClick={() => remove(feature.fid)}
+          className="h-9 shrink-0 rounded-control border border-border-strong px-3 text-sm hover:bg-surface-raised"
+        >
+          Remove
+        </button>
+      </div>
     </section>
   );
 }

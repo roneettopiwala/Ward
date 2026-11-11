@@ -12,6 +12,7 @@ import {
   FONT,
   labelLayers,
 } from "./basemap";
+import { partHeight } from "./parts";
 import type { MapTokens } from "./tokens";
 import type { BaseFeature, CatalogType, PersonaCard, Proposal } from "./types";
 
@@ -91,6 +92,7 @@ export function buildStyle(t: MapTokens): StyleSpecification {
         filter: isArea,
         paint: {
           "fill-extrusion-color": ["get", "color"],
+          "fill-extrusion-base": ["get", "base"],
           "fill-extrusion-height": ["get", "height"],
           "fill-extrusion-opacity": 0.9,
         },
@@ -191,7 +193,11 @@ export function toCollection(geometries: Geometry[]): FeatureCollection {
   };
 }
 
-/** Proposals styled by their catalog type: extruded by height, or flat (parks). */
+/**
+ * Proposals styled by their catalog types: one feature per part, stacked bottom
+ * to top. Buildings extrude by height; a flat part (park) is a thin slab on the
+ * ground, or on the roof of a mixed-use stack.
+ */
 export function proposalsCollection(
   proposals: Proposal[],
   catalog: CatalogType[],
@@ -200,21 +206,23 @@ export function proposalsCollection(
   const types = new Map(catalog.map((c) => [c.type, c]));
   return {
     type: "FeatureCollection",
-    features: proposals.map((p): Feature => {
-      const render = types.get(p.type)?.render;
-      const flat = render?.kind === "flat";
-      const height = render?.heightParam ? p.params[render.heightParam] : undefined;
-      const color = render ? t[render.color as keyof MapTokens] : undefined;
-      return {
-        type: "Feature",
-        id: p.id,
-        properties: {
-          type: p.type,
-          height: flat ? FLAT_HEIGHT_M : (height ?? PLACEHOLDER_HEIGHT_M),
-          color: color ?? t.accent,
-        },
-        geometry: p.geometry,
-      };
+    features: proposals.flatMap((p) => {
+      let base = 0;
+      return p.parts.map((part, i): Feature => {
+        const type = types.get(part.type);
+        const render = type?.render;
+        const height =
+          render?.kind === "flat" ? FLAT_HEIGHT_M : render ? partHeight(part, type) : PLACEHOLDER_HEIGHT_M;
+        const color = render ? t[render.color as keyof MapTokens] : undefined;
+        const feature: Feature = {
+          type: "Feature",
+          id: `${p.id}:${i}`,
+          properties: { type: part.type, base, height: base + height, color: color ?? t.accent },
+          geometry: p.geometry,
+        };
+        base += height;
+        return feature;
+      });
     }),
   };
 }

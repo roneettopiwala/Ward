@@ -31,6 +31,7 @@ import {
   SELECTION_SOURCE,
   toCollection,
 } from "@/lib/map-style";
+import { catalogMap, largestRadius } from "@/lib/parts";
 import { selectAt } from "@/lib/selection";
 import { type Draft, useMapStore } from "@/lib/store";
 import { type MapTokens, readMapTokens } from "@/lib/tokens";
@@ -38,6 +39,8 @@ import type { Geometry, Proposal } from "@/lib/types";
 
 import MapControls from "./map-controls";
 import PersonaPins from "./persona-pins";
+import PreviewCard from "./preview-card";
+import PromptBar from "./prompt-bar";
 import ResultsPanel from "./results-panel";
 import SelectionCard from "./selection-card";
 
@@ -47,7 +50,16 @@ type State = ReturnType<typeof useMapStore.getState>;
 function draftProposal(state: State, draft: Draft): Proposal | null {
   const feature = state.features[draft.fid];
   if (!feature) return null;
-  return { id: "draft", ...draft, geometry: feature.footprint, replaces: [draft.fid] };
+  return {
+    id: "draft",
+    parts: draft.parts,
+    geometry: feature.footprint,
+    replaces: [draft.fid],
+    prompt: draft.prompt,
+    assumptions: draft.assumptions,
+    parentId: draft.parentId,
+    version: 0,
+  };
 }
 
 /** What the impact ring surrounds: the draft being set up, else the open proposal. */
@@ -55,8 +67,8 @@ function impactTarget(state: State): { geometry: Geometry; radiusM: number } | n
   const proposal = state.draft
     ? draftProposal(state, state.draft)
     : state.proposals.find((p) => p.id === state.activeProposal);
-  const type = proposal && state.catalog.find((t) => t.type === proposal.type);
-  return proposal && type ? { geometry: proposal.geometry, radiusM: type.impactRadiusM } : null;
+  const radiusM = proposal && largestRadius(proposal.parts, catalogMap(state.catalog));
+  return proposal && radiusM ? { geometry: proposal.geometry, radiusM } : null;
 }
 
 /** Downtown, looking north-west along the street grid (rotated ~17° from north). */
@@ -150,7 +162,9 @@ export default function MapView() {
         state.catalog !== prev?.catalog
       ) {
         const draft = state.draft && draftProposal(state, state.draft);
-        const shown = draft ? [...state.proposals, draft] : state.proposals;
+        // A draft that changes a proposal is previewed in its place.
+        const kept = state.proposals.filter((p) => p.id !== draft?.parentId);
+        const shown = draft ? [...kept, draft] : state.proposals;
         if (tokens.current) {
           source(PROPOSALS_SOURCE)?.setData(proposalsCollection(shown, state.catalog, tokens.current));
         }
@@ -188,6 +202,8 @@ export default function MapView() {
           <MapControls map={map} />
           <PersonaPins map={map} />
           <ResultsPanel />
+          <PreviewCard />
+          <PromptBar />
         </>
       )}
     </div>

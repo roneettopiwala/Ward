@@ -1,15 +1,15 @@
 "use client";
 
-import { MapPin, Minus, Plus, X } from "lucide-react";
+import { MapPin, Minus, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { analyzeProposal } from "@/lib/analysis";
 import { useMapStore } from "@/lib/store";
-import type { Analysis, CatalogType, Fact, PersonaCard, ProCon, Proposal, Sentiment, Stance } from "@/lib/types";
+import { catalogMap, stackLabel, stackSummary } from "@/lib/parts";
+import type { Analysis, Fact, PersonaCard, ProCon, Sentiment, Stance } from "@/lib/types";
 
 import { km } from "./persona-pins";
 
-const number = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const percent = (share: number) => `${Math.round(share * 100)}%`;
 
 type Tab = "summary" | "personas" | "data";
@@ -58,14 +58,6 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** "Rogers Centre · 20 m" from the site and the type's main params. */
-function subtitle(proposal: Proposal, type: CatalogType | undefined, site: string | undefined) {
-  const params = Object.entries(type?.params ?? {})
-    .filter(([, p]) => p.main)
-    .map(([name, p]) => `${number.format(proposal.params[name] ?? p.default)} ${p.unit ?? ""}`.trim());
-  return [site, ...params].filter(Boolean).join(" · ");
-}
-
 function Skeleton({ rows }: { rows: number }) {
   return (
     <ul className="mt-3 flex flex-col gap-3" aria-hidden>
@@ -87,12 +79,29 @@ function shares(cards: PersonaCard[], sentiment: Sentiment | undefined) {
   return { support: count("supports"), neutral: count("neutral"), oppose: count("opposes") };
 }
 
-function SentimentBar({ cards, sentiment }: { cards: PersonaCard[]; sentiment?: Sentiment }) {
+/** "+6" / "−4" in percentage points against the previous version. */
+function delta(now: number, before: number | undefined): string | null {
+  if (before === undefined) return null;
+  const d = Math.round(now * 100) - Math.round(before * 100);
+  return d === 0 ? "±0" : d > 0 ? `+${d}` : `−${-d}`;
+}
+
+function SentimentBar({
+  cards,
+  sentiment,
+  previous,
+}: {
+  cards: PersonaCard[];
+  sentiment?: Sentiment;
+  /** The previous version's sentiment, to show the change. */
+  previous?: { version: number; sentiment: Sentiment };
+}) {
   const s = shares(cards, sentiment);
+  const before = sentiment && previous ? previous.sentiment : undefined;
   const parts = [
-    { share: s.support, bg: "bg-support", label: "support" },
-    { share: s.neutral, bg: "bg-neutral", label: "neutral" },
-    { share: s.oppose, bg: "bg-oppose", label: "oppose" },
+    { share: s.support, bg: "bg-support", label: "support", before: before?.support },
+    { share: s.neutral, bg: "bg-neutral", label: "neutral", before: before?.neutral },
+    { share: s.oppose, bg: "bg-oppose", label: "oppose", before: before?.oppose },
   ];
   return (
     <section className="mt-4" aria-label="Overall sentiment">
@@ -110,13 +119,22 @@ function SentimentBar({ cards, sentiment }: { cards: PersonaCard[]; sentiment?: 
             />
           ))}
       </div>
-      <p className="mt-2 flex gap-4 text-xs text-fg-muted">
-        {parts.map((p) => (
-          <span key={p.label}>
-            <span className="font-semibold text-fg">{percent(p.share)}</span> {p.label}
-          </span>
-        ))}
+      <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
+        {parts.map((p) => {
+          const change = delta(p.share, p.before);
+          return (
+            <span key={p.label}>
+              <span className="font-semibold text-fg">{percent(p.share)}</span> {p.label}
+              {change && <span className="ml-1 font-mono text-fg-subtle">({change})</span>}
+            </span>
+          );
+        })}
       </p>
+      {before && previous && (
+        <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-fg-subtle">
+          Change vs. V{previous.version}: {previous.sentiment.label} → {sentiment?.label}
+        </p>
+      )}
     </section>
   );
 }
@@ -332,7 +350,12 @@ function FactList({ facts }: { facts: Fact[] }) {
 export default function ResultsPanel() {
   const proposal = useMapStore((s) => s.proposals.find((p) => p.id === s.activeProposal));
   const analysis = useMapStore((s) => (s.activeProposal ? s.analyses[s.activeProposal] : undefined));
-  const type = useMapStore((s) => s.catalog.find((t) => t.type === proposal?.type));
+  const catalog = useMapStore((s) => s.catalog);
+  const draft = useMapStore((s) => s.draft);
+  const editProposal = useMapStore((s) => s.editProposal);
+  const parentAnalysis = useMapStore((s) =>
+    proposal?.parentId ? s.analyses[proposal.parentId] : undefined,
+  );
   const focused = useMapStore((s) => s.focusedPersona);
   const closePanel = useMapStore((s) => s.closePanel);
   const [tab, setTab] = useState<Tab>("summary");
@@ -344,7 +367,13 @@ export default function ResultsPanel() {
     if (focused) setTab("personas");
   }
 
-  if (!proposal || !analysis) return null;
+  // The preview card takes this place while a change is being drafted.
+  if (!proposal || !analysis || draft) return null;
+  const types = catalogMap(catalog);
+  const previous =
+    parentAnalysis?.sentiment && proposal.version > 1
+      ? { version: proposal.version - 1, sentiment: parentAnalysis.sentiment }
+      : undefined;
   const { status, factSheet, pros, cons, personas = [], sentiment } = analysis;
   const facts = new Map(factSheet?.facts.map((f) => [f.id, f]));
   const working = status !== "done" && status !== "error";
@@ -382,10 +411,34 @@ export default function ResultsPanel() {
             <X className="size-4" />
           </button>
         </div>
-        <h2 className="mt-3 text-lg font-semibold">{type?.label ?? proposal.type}</h2>
-        <p className="text-sm text-fg-muted">{subtitle(proposal, type, factSheet?.siteName)}</p>
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 text-lg font-semibold">
+              {stackLabel(proposal.parts, types)}
+              {proposal.version > 1 && (
+                <span className="rounded border border-border-strong px-1.5 font-mono text-[10px] text-fg-muted">
+                  V{proposal.version}
+                </span>
+              )}
+            </h2>
+            <p className="text-sm text-fg-muted">
+              {[factSheet?.siteName, stackSummary(proposal.parts, types)].filter(Boolean).join(" · ")}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={working}
+            onClick={() => editProposal(proposal.id)}
+            title={working ? "Available when the analysis finishes" : "Adjust parts and parameters"}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-control border border-border-strong px-2.5 text-xs hover:bg-surface-raised disabled:opacity-40"
+          >
+            <Pencil className="size-3" /> Edit
+          </button>
+        </div>
 
-        {(analysis.personaTotal || sentiment) && <SentimentBar cards={personas} sentiment={sentiment} />}
+        {(analysis.personaTotal || sentiment) && (
+          <SentimentBar cards={personas} sentiment={sentiment} previous={previous} />
+        )}
 
         <nav className="mt-4 flex gap-5 text-sm" aria-label="Result views">
           {(["summary", "personas", "data"] as const).map((t) => (
