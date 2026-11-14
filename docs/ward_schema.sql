@@ -61,7 +61,9 @@ CREATE TABLE zoning (
 CREATE TABLE streets (
   fid         TEXT PRIMARY KEY,               -- 'street:<id>'
   name        TEXT,
-  road_class  TEXT,                           -- arterial, collector, local, ...
+  road_class  TEXT,                           -- expressway, ramp (expressway), arterial_ramp,
+                                              -- major_arterial, minor_arterial, collector,
+                                              -- local, laneway, access, busway, trail, walkway
   source      BIGINT,                         -- pgRouting graph nodes
   target      BIGINT,
   length_m    REAL,
@@ -77,8 +79,16 @@ CREATE TABLE parks (
 
 CREATE TABLE cycling (
   fid            TEXT PRIMARY KEY,            -- 'cycling:<id>'
-  facility_type  TEXT,                        -- painted, protected, trail, ...
+  name           TEXT,                        -- street or trail name
+  facility_type  TEXT,                        -- painted, protected, trail, shared
+  installed      INT,                         -- year
   geom           GEOMETRY(MultiLineString, 4326) NOT NULL
+);
+
+-- Neighbourhoods the citywide ingest has finished, so a rerun can resume.
+CREATE TABLE ingest_log (
+  neighbourhood_id  INT PRIMARY KEY,
+  finished_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE transit_stops (

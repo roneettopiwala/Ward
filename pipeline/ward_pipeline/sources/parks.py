@@ -1,6 +1,7 @@
 """Public parks and open space from the City's Green Spaces dataset."""
 
 import logging
+import string
 
 import geopandas as gpd
 import shapely
@@ -30,13 +31,18 @@ def load(area: Area) -> gpd.GeoDataFrame:
     gdf = gpd.GeoDataFrame(
         {
             "fid": "park:" + raw["AREA_ID"].astype(int).astype(str),
-            "name": raw["AREA_NAME"].str.title(),
+            # capwords, not title(): "HANLAN'S POINT" -> "Hanlan's Point", not "Hanlan'S".
+            "name": raw["AREA_NAME"].map(lambda n: string.capwords(n) if isinstance(n, str) else n),
             "area_m2": raw.geometry.to_crs(METRIC_CRS).area.round(1),
         },
         geometry=[as_multipolygon(shapely.make_valid(g)) for g in raw.geometry],
         crs=WGS84,
     )
     gdf = gdf[gdf.geom_type == "MultiPolygon"]
+    # Some parks come in several pieces with the same id; merge them into one.
+    if gdf["fid"].duplicated().any():
+        gdf = gdf.dissolve(by="fid", aggfunc={"name": "first", "area_m2": "sum"}).reset_index()
+        gdf = gdf.set_geometry(gdf.geometry.apply(as_multipolygon))
     log.info("parks: %d", len(gdf))
     return gdf
 

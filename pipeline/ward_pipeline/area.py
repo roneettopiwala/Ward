@@ -25,12 +25,22 @@ class Area:
         return s.to_crs(WGS84).iloc[0]
 
 
-def load_area(ids: list[int]) -> Area:
+def _all_neighbourhoods() -> gpd.GeoDataFrame:
     path = toronto_resource(
         "neighbourhoods", "Neighbourhoods - 4326.geojson", "neighbourhoods.geojson"
     )
     all_ = gpd.read_file(path)
     all_["id"] = all_["AREA_SHORT_CODE"].astype(int)
+    return all_
+
+
+def all_ids() -> list[int]:
+    """Every City of Toronto neighbourhood number (158 since 2022)."""
+    return sorted(_all_neighbourhoods()["id"].tolist())
+
+
+def load_area(ids: list[int]) -> Area:
+    all_ = _all_neighbourhoods()
     picked = all_[all_["id"].isin(ids)]
     missing = set(ids) - set(picked["id"])
     if missing:
