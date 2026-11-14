@@ -1,32 +1,33 @@
-import type { Map as MapLibreMap, PointLike } from "maplibre-gl";
+import type { Map as MapLibreMap } from "maplibre-gl";
 
-import { featureAt, featureDetail } from "./api";
-import { buildingAt, linkFid } from "./basemap";
+import { featureDetail } from "./api";
+import { featuresAt } from "./city-layers";
 import { useMapStore } from "./store";
+import type { BaseFeature } from "./types";
 
 /**
- * Select the building under a click: show the basemap's version straight
- * away, then swap in ours from the API once the location is matched.
+ * Select what's under a click: the top feature by priority (buildings, points,
+ * lines, parks, parcels). Anything else there is offered as "Also here".
  */
-export async function selectAt(map: MapLibreMap, point: PointLike): Promise<void> {
-  const { select, resolve } = useMapStore.getState();
-  const hit = buildingAt(map, point);
-  if (!hit) {
-    select(null);
+export async function selectAt(map: MapLibreMap, point: { x: number; y: number }): Promise<void> {
+  const [top, ...others] = featuresAt(map, point);
+  if (!top) {
+    useMapStore.getState().select(null);
     return;
   }
-  const pending = hit.feature;
-  select(pending, "loading");
+  await selectFeature(top, others);
+}
 
+/**
+ * Show the tile's version of a feature straight away, then swap in the full
+ * one (whole geometry, zoning, nearby transit) from the API.
+ */
+export async function selectFeature(pending: BaseFeature, alsoHere: BaseFeature[]): Promise<void> {
+  const { select, resolve } = useMapStore.getState();
+  select(pending, "loading", alsoHere);
   try {
-    const match = await featureAt(hit.ground);
-    if ("missing" in match) {
-      resolve(pending.fid, pending, match.missing === "outside_area" ? "outside-area" : "not-found");
-      return;
-    }
-    const feature = await featureDetail(match.fid);
-    linkFid(feature.fid, pending.fid);
-    resolve(pending.fid, feature, "ready");
+    const feature = await featureDetail(pending.fid);
+    resolve(pending.fid, feature ?? pending, feature ? "ready" : "not-found");
   } catch {
     resolve(pending.fid, pending, "error");
   }
