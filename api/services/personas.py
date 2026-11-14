@@ -28,6 +28,8 @@ ROLE_MIX = {"resident": 11, "worker": 3, "visitor": 1}
 HOME_SEARCH_M = 800
 EVERYDAY_SEARCH_M = 600
 GENERATION_TIMEOUT_S = 300
+# Workers and visitors come from census areas within this distance of the neighbourhood.
+COMMUTE_REACH_M = 10_000
 # Modelling assumptions where the census tables we load don't say.
 RETIRED_SHARE_65_PLUS = 0.8
 STUDENT_SHARE_18_24 = 0.5
@@ -219,19 +221,23 @@ def _person_household_size(rng: random.Random, dist: dict[str, float] | None) ->
     return _pick(rng, weighted, "2")
 
 
-async def _census_areas(conn: AsyncConnection) -> list[Any]:
+async def _census_areas(conn: AsyncConnection, neighbourhood_id: int) -> list[Any]:
+    """Census areas in the neighbourhood and within commuting distance of it."""
     return list(
         (
             await conn.execute(
                 text(
                     """
+                    WITH home AS (SELECT geom FROM neighbourhoods WHERE id = :nid)
                     SELECT c.dguid, c.neighbourhood_id, n.name AS neighbourhood, c.population,
                            c.pct_renters, c.age_dist, c.occupation_dist, c.language_dist,
                            c.housing_dist, c.commute_dist, c.household_dist
-                    FROM census_areas c JOIN neighbourhoods n ON n.id = c.neighbourhood_id
+                    FROM census_areas c JOIN neighbourhoods n ON n.id = c.neighbourhood_id, home
                     WHERE c.population > 0 AND c.age_dist IS NOT NULL
+                      AND ST_DWithin(c.geom::geography, home.geom::geography, :reach)
                     """
-                )
+                ),
+                {"nid": neighbourhood_id, "reach": COMMUTE_REACH_M},
             )
         ).all()
     )
@@ -255,10 +261,15 @@ async def _home_point(conn: AsyncConnection, dguid: str, seed: int) -> tuple[flo
                     ORDER BY md5(b.fid || :salt)
                     LIMIT 1
                 )
+                , spot AS (SELECT COALESCE((SELECT geom FROM home), (SELECT geom FROM area)) AS g)
                 SELECT ST_X(p) AS lng, ST_Y(p) AS lat FROM (
-                    SELECT (ST_Dump(ST_GeneratePoints(
-                        COALESCE((SELECT geom FROM home), (SELECT geom FROM area)), 1, :seed
-                    ))).geom AS p
+                    -- A random point inside; tiny or thin shapes can yield none,
+                    -- so fall back to a point on the surface.
+                    SELECT COALESCE(
+                        (SELECT (ST_Dump(ST_GeneratePoints(spot.g, 1, :seed))).geom LIMIT 1),
+                        ST_PointOnSurface(spot.g)
+                    ) AS p
+                    FROM spot
                 ) s
                 """
             ),
@@ -376,7 +387,7 @@ async def _place_point(conn: AsyncConnection, fid: str) -> tuple[float, float]:
 async def sample(conn: AsyncConnection, neighbourhood_id: int) -> list[Sampled]:
     """The facts for each persona, drawn from census distributions. Seeded per area."""
     rng = random.Random(neighbourhood_id)
-    areas = await _census_areas(conn)
+    areas = await _census_areas(conn, neighbourhood_id)
     local = [a for a in areas if a.neighbourhood_id == neighbourhood_id]
     elsewhere = [a for a in areas if a.neighbourhood_id != neighbourhood_id] or local
     if not local:
@@ -628,24 +639,20 @@ def _place(raw: dict[str, Any]) -> Place:
     return place
 
 
-async def neighbourhood_of(conn: AsyncConnection, geometry: dict[str, Any]) -> int | None:
-    """The neighbourhood a proposal sits in (or the nearest one within 500 m)."""
-    return await conn.scalar(
-        text(
-            """
-            WITH s AS (SELECT ST_PointOnSurface(ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326)) AS p)
-            SELECT n.id FROM neighbourhoods n, s
-            WHERE ST_DWithin(n.geom::geography, s.p::geography, 500)
-            ORDER BY ST_Distance(n.geom, s.p), n.id
-            LIMIT 1
-            """
-        ),
-        {"g": json.dumps(geometry)},
-    )
+# Groups that follow from how a persona gets to work (census commute mode).
+COMMUTE_GROUPS = {"bike": "cyclists", "transit": "transit_riders", "car": "drivers"}
+
+
+def groups(p: Persona) -> set[str]:
+    """The catalog `relevant_to` groups a persona belongs to."""
+    out = set(p.tags)
+    if p.commute_mode in COMMUTE_GROUPS:
+        out.add(COMMUTE_GROUPS[p.commute_mode])
+    return out
 
 
 def select(personas: list[Persona], relevant_to: list[str], limit: int = 15) -> list[Persona]:
     """The personas who react, most relevant to this kind of proposal first."""
     wanted = set(relevant_to)
-    ranked = sorted(personas, key=lambda p: -len(wanted & set(p.tags)))
+    ranked = sorted(personas, key=lambda p: -len(wanted & groups(p)))
     return ranked[:limit]
