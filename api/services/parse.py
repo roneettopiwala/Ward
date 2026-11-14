@@ -10,12 +10,18 @@ checked against the catalog, and the model gets one retry with the problems.
 import json
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services import llm
-from services.catalog import Part, Stack, TypeDef, catalog
+from services.catalog import GEOMETRY_TYPES, GeometryKind, Part, Stack, TypeDef, catalog
 from services.proposals import ProposalError, validate_parts
 from settings import get_settings
+
+SHAPE_NAMES: dict[GeometryKind, str] = {
+    "polygon": "an area (a building, lot, park or drawn area)",
+    "line": "a line drawn along streets",
+    "point": "a point",
+}
 
 
 class Selection(BaseModel):
@@ -38,6 +44,9 @@ class ParseRequest(BaseModel):
 
 
 class ParsedPart(BaseModel):
+    # A param given beside "params" instead of inside it is an error the model can fix.
+    model_config = ConfigDict(extra="forbid")
+
     type: str
     params: dict[str, float] = {}
     storeys: float | None = Field(default=None, gt=0)
@@ -61,7 +70,13 @@ class ParseResult(BaseModel):
     model: str
 
 
-def _catalog_brief() -> list[dict[str, Any]]:
+def _shape(geometry_type: str) -> GeometryKind:
+    return next((k for k, ts in GEOMETRY_TYPES.items() if geometry_type in ts), "polygon")
+
+
+def _catalog_brief(shape: GeometryKind) -> list[dict[str, Any]]:
+    """The types that fit the site's shape (an area, a line or a point)."""
+
     def params(t: TypeDef) -> dict[str, Any]:
         return {
             name: {
@@ -79,12 +94,15 @@ def _catalog_brief() -> list[dict[str, Any]]:
             "type": t.type,
             "label": t.label,
             "description": t.description,
-            "kind": "flat (no height)" if t.render.kind == "flat" else "building",
+            "kind": {"flat": "flat (no height)", "extrusion": "building"}.get(
+                t.render.kind, t.render.kind
+            ),
             "params": params(t),
             "storey_height_m": t.storey_m,
             "height_param": t.render.height_param,
         }
         for t in catalog().values()
+        if t.geometry == shape
     ]
 
 
@@ -138,7 +156,8 @@ def resolve(reply: ParseReply, geometry_type: str) -> tuple[list[Part], list[str
 
 async def parse(req: ParseRequest) -> ParseResult:
     payload: dict[str, Any] = {
-        "catalog": _catalog_brief(),
+        "catalog": _catalog_brief(_shape(req.geometry_type)),
+        "site_shape": SHAPE_NAMES[_shape(req.geometry_type)],
         "selection": req.selection.model_dump(exclude_none=True),
         "prompt": req.prompt,
     }

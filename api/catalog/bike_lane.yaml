@@ -1,0 +1,32 @@
+# A cycling route drawn along streets.
+type: bike_lane
+label: Bike lane
+description: >-
+  A cycling route along streets: painted bike lanes, protected or separated
+  cycle tracks, bike boulevards, multi-use paths. Tag the kind, e.g.
+  ["protected"] or ["painted"].
+geometry: line
+draw:
+  tools: [route]
+  min_length_m: 100
+  max_length_m: 15000
+  snap: street
+params: {}
+render:
+  kind: line
+  color: accent
+impact_radius_m: 400
+impact_metrics:
+  - site
+  - bike_route
+  - cycling_network
+  - transit
+  - population
+  - bike_commuters
+  - schools
+  - retail_nearby
+relevant_to:
+  - cyclists
+  - local_business
+  - families
+  - commuters

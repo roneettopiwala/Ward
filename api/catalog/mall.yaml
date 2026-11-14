@@ -5,6 +5,10 @@ description: >-
   Retail and commercial floor space: shopping centres, shops, grocery stores,
   food halls, restaurants, retail podiums under towers.
 geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 200
+  max_area_m2: 200000
 params:
   height_m:
     label: Height
