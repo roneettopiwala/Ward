@@ -3,9 +3,9 @@
 import { ArrowRight, Loader2, MessageCircleQuestion } from "lucide-react";
 import { useState } from "react";
 
-import { parsePrompt } from "@/lib/api";
+import { parsePrompt, validateShape } from "@/lib/api";
 import { useMapStore } from "@/lib/store";
-import type { Part } from "@/lib/types";
+import { type Part, REPLACEABLE } from "@/lib/types";
 
 import { zoningText } from "./selection-card";
 
@@ -22,7 +22,7 @@ type Mode = "describe" | "update" | "refine";
 
 const MODES: Record<Mode, { placeholder: string; button: string }> = {
   describe: { placeholder: "Describe what you want to build here…", button: "Preview" },
-  update: { placeholder: "Change the preview, e.g. “add a rooftop park”…", button: "Update" },
+  update: { placeholder: "Change the preview in your own words…", button: "Update" },
   refine: { placeholder: "Ask a follow-up or change the proposal…", button: "Refine" },
 };
 
@@ -40,15 +40,18 @@ export default function PromptBar() {
   const text = useMapStore((s) => s.promptText);
   const setText = useMapStore((s) => s.setPromptText);
   const setDraft = useMapStore((s) => s.setDraft);
+  const drawing = useMapStore((s) => s.tool !== "select");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clarify, setClarify] = useState<{ question: string; prompt: string } | null>(null);
 
   // What the bar acts on: an open preview, else a fresh selection, else the open results.
   const mode: Mode | null = draft ? "update" : selected ? "describe" : active ? "refine" : null;
-  const fid = draft?.fid ?? selected ?? active?.replaces[0];
+  const fid = draft?.fid ?? selected ?? active?.siteFid;
   const feature = fid ? features[fid] : undefined;
-  if (!mode || !fid || !feature || (mode === "describe" && selectionStatus === "loading")) return null;
+  if (drawing || !mode || !fid || !feature || (mode === "describe" && selectionStatus === "loading")) return null;
+  // Streets, cycling routes and stops can't be replaced (drawing comes next).
+  if (mode === "describe" && !REPLACEABLE.includes(feature.kind)) return null;
 
   const current: Part[] | undefined =
     mode === "update" ? draft?.parts : mode === "refine" ? active?.parts : undefined;
@@ -65,7 +68,7 @@ export default function PromptBar() {
     try {
       const result = await parsePrompt({
         prompt,
-        geometryType: feature.footprint.type,
+        geometryType: feature.geometry.type,
         selection: {
           name: feature.name,
           use: feature.use,
@@ -79,11 +82,16 @@ export default function PromptBar() {
         setClarify({ question: result.clarification, prompt });
       } else {
         setClarify(null);
+        // A drawn shape gets the chosen type's own checks (size, length).
+        const checks =
+          feature.kind === "drawn" && result.parts[0]
+            ? await validateShape(feature.geometry, result.parts[0].type).catch(() => null)
+            : null;
         setDraft({
           fid,
           parts: result.parts,
           prompt,
-          assumptions: result.assumptions,
+          assumptions: [...(checks?.errors ?? []), ...result.assumptions],
           replacesExisting: result.replacesExisting,
           parentId,
         });
