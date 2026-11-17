@@ -141,8 +141,10 @@ async def _personas(
         raise PersonaError("This site is outside the City of Toronto, where Ward has data.")
 
     # Personas are made once per neighbourhood, on first use, then reused.
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         pools = {nid: await personas.load(conn, nid) for nid in seats}
+        for pool in pools.values():
+            await personas.add_missing_voices(conn, pool)
     new = [nid for nid, pool in pools.items() if not pool]
     if new:
         names = [n.name for n in area.neighbourhoods if n.id in new]

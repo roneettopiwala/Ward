@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from services import llm
+from services import llm, voices
 from settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -516,6 +516,7 @@ async def ensure(engine: AsyncEngine, neighbourhood_id: int) -> tuple[list[Perso
         await conn.execute(text("SELECT pg_advisory_xact_lock(4, :n)"), {"n": neighbourhood_id})
         existing = await load(conn, neighbourhood_id)
         if existing:
+            await add_missing_voices(conn, existing)
             return existing, False
         log.info("generating personas for neighbourhood %d", neighbourhood_id)
         sampled = await sample(conn, neighbourhood_id)
@@ -529,7 +530,8 @@ async def ensure(engine: AsyncEngine, neighbourhood_id: int) -> tuple[list[Perso
 async def _insert(
     conn: AsyncConnection, neighbourhood_id: int, s: Sampled, story: Story, model: str
 ) -> None:
-    traits = {
+    persona_id = uuid.uuid4()
+    traits: dict[str, Any] = {
         "tagline": story.tagline,
         "quirks": story.quirks,
         "openness": story.openness,
@@ -543,19 +545,22 @@ async def _insert(
         "based_on": s.based_on(),
         "tags": _tags(s, story),
     }
-    persona_id = await conn.scalar(
+    traits["voice"] = voices.assign(
+        voices.situation(str(persona_id), s.age, s.role, story.stubbornness, traits)
+    )
+    await conn.execute(
         text(
             """
-            INSERT INTO personas (dguid, neighbourhood_id, role, name, age, tenure, commute_mode,
-                                  occupation, household, values_list, traits, stubbornness,
-                                  backstory, model, home)
-            VALUES (:dguid, :nid, :role, :name, :age, :tenure, :commute, :occupation,
+            INSERT INTO personas (id, dguid, neighbourhood_id, role, name, age, tenure,
+                                  commute_mode, occupation, household, values_list, traits,
+                                  stubbornness, backstory, model, home)
+            VALUES (:id, :dguid, :nid, :role, :name, :age, :tenure, :commute, :occupation,
                     :household, :values, CAST(:traits AS jsonb), :stubbornness, :backstory,
                     :model, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))
-            RETURNING id
             """
         ),
         {
+            "id": persona_id,
             "dguid": s.dguid,
             "nid": neighbourhood_id,
             "role": s.role,
@@ -580,6 +585,23 @@ async def _insert(
                 "INSERT INTO persona_places (persona_id, place_fid, relation) VALUES (:p, :f, :r)"
             ),
             {"p": persona_id, "f": c.fid, "r": story.places[c.fid]},
+        )
+
+
+async def add_missing_voices(conn: AsyncConnection, personas: list[Persona]) -> None:
+    """Give personas made before voices existed one, once, and store it."""
+    for p in personas:
+        if "voice" in p.traits:
+            continue
+        p.traits["voice"] = voices.assign(
+            voices.situation(str(p.id), p.age, p.role, p.stubbornness, p.traits)
+        )
+        await conn.execute(
+            text(
+                "UPDATE personas SET traits = jsonb_set(traits, '{voice}', CAST(:v AS jsonb)) "
+                "WHERE id = :id"
+            ),
+            {"v": json.dumps(p.traits["voice"]), "id": p.id},
         )
 
 

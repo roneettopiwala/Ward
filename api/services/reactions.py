@@ -1,7 +1,8 @@
 """Persona reactions: each persona reads the fact sheet and their personal impact.
 
-One fast model, called in parallel. Every reply is validated (stance range,
-two reasons, a 1 to 3 sentence quote, known themes, no numbers that aren't in
+One model for everyone, called in parallel; each persona speaks in their own
+voice. Every reply is validated (stance range, two reasons, a quote within the
+persona's sentence limit, known themes, no numbers that aren't in
 the facts) and retried once. The overall sentiment is computed in code.
 """
 
@@ -16,11 +17,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from services import llm
+from services import llm, voices
 from services.facts import FactSheet
 from services.impact import PersonalImpact
 from services.personas import Persona
 from services.pros_cons import NUMBER
+from settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -74,14 +76,21 @@ def _profile(p: Persona) -> dict:
         "openness_to_change": p.traits.get("openness"),
         "trust_in_government": p.traits.get("trust_in_government"),
         "backstory": p.backstory,
+        "how_you_talk": voices.describe(p.traits.get("voice", {})),
     }
 
 
-def _problems(r: Reaction, allowed_text: str) -> list[str]:
+def _problems(r: Reaction, allowed_text: str, voice: dict | None = None) -> list[str]:
     found = []
     sentences = len(SENTENCE_END.findall(r.quote.strip())) or 1
-    if sentences > 3:
-        found.append(f"the quote has {sentences} sentences; use 1 to 3")
+    if sentences > voices.max_sentences(voice):
+        found.append(
+            f"the quote has {sentences} sentences; use at most {voices.max_sentences(voice)}, "
+            "as in how_you_talk"
+        )
+    words = len(r.quote.split())
+    if words > voices.max_words(voice):
+        found.append(f"the quote has {words} words; keep it shorter, as in how_you_talk")
     allowed = {float(n.replace(",", "")) for n in NUMBER.findall(allowed_text)}
     for field, value in (("quote", r.quote), *(("reason", x) for x in r.reasons)):
         stray = [n for n in NUMBER.findall(value) if float(n.replace(",", "")) not in allowed]
@@ -111,8 +120,8 @@ async def react(p: Persona, impact: PersonalImpact, sheet: FactSheet) -> Persona
         system=llm.prompt("persona_react"),
         user=user,
         schema=Reaction,
-        check=lambda r: _problems(r, user),
-        model=p.model,
+        check=lambda r: _problems(r, user, p.traits.get("voice")),
+        model=get_settings().reaction_model,
         max_tokens=1000,
     )
     return PersonaReaction(

@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     persona_model: str = "anthropic/claude-sonnet-5-5"
     # Turns typed prompts into proposals (fast; called on every Preview and Refine).
     parse_model: str = "anthropic/claude-haiku-5-5"
-    # Every persona reaction (fast, called in parallel). Stored on each persona.
-    reaction_model: str = "anthropic/claude-haiku-5-5"
+    # Every persona reaction, one model for everyone (called in parallel).
+    reaction_model: str = "anthropic/claude-sonnet-5-5"
 
 
 @lru_cache
