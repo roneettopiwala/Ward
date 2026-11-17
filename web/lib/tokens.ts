@@ -7,10 +7,13 @@ export type MapTokens = {
   water: string;
   park: string;
   label: string;
+  cycling: string;
+  transit: string;
   removed: string;
   proposalPark: string;
   /** Retail parts, a shade darker so podiums read apart from towers. */
   proposalRetail: string;
+  proposalGarden: string;
   accent: string;
   bg: string;
   support: string;
@@ -26,9 +29,12 @@ const cssVars: Record<keyof MapTokens, string> = {
   water: "--color-map-water",
   park: "--color-map-park",
   label: "--color-map-label",
+  cycling: "--color-map-cycling",
+  transit: "--color-map-transit",
   removed: "--color-map-removed",
   proposalPark: "--color-map-proposal-park",
   proposalRetail: "--color-map-proposal-retail",
+  proposalGarden: "--color-map-proposal-garden",
   accent: "--color-accent",
   bg: "--color-bg",
   support: "--color-support",

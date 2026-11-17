@@ -5,6 +5,10 @@ description: >-
   Homes in a multi-storey building: condos, rental apartments, affordable or
   student housing, seniors' residences.
 geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 100
+  max_area_m2: 100000
 params:
   height_m:
     label: Height

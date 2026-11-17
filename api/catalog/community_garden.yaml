@@ -1,0 +1,39 @@
+# Shared growing space run by neighbours.
+type: community_garden
+label: Community garden
+description: >-
+  Shared growing space: community garden plots, allotments, urban farms,
+  pollinator gardens. Can also be a rooftop garden on a building.
+geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 50
+  max_area_m2: 50000
+green_space: true
+params:
+  plots:
+    label: Garden plots
+    unit: plots
+    default: 40
+    min: 5
+    max: 400
+    step: 5
+    main: true
+render:
+  kind: flat
+  color: proposalGarden
+impact_radius_m: 500
+impact_metrics:
+  - replaced
+  - site
+  - parks
+  - schools
+  - groceries
+  - population
+  - green_space_per_resident
+  - garden
+relevant_to:
+  - residents
+  - renters
+  - families
+  - seniors

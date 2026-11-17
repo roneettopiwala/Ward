@@ -32,6 +32,7 @@ Theme = Literal[
     "housing", "affordability", "height_and_shadows", "green_space", "transit",
     "traffic_and_parking", "construction", "noise_and_crowds", "local_business", "jobs",
     "schools", "density", "walkability", "neighbourhood_character", "events_and_tourism",
+    "cycling", "road_safety",
 ]  # fmt: skip
 SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)")
 

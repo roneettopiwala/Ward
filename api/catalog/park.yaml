@@ -5,6 +5,11 @@ description: >-
   Open green space: a public park covering the whole site, or a rooftop park
   or garden on top of a building.
 geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 50
+  max_area_m2: 2000000
+green_space: true
 params: {}
 render:
   kind: flat

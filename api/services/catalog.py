@@ -36,6 +36,21 @@ class Render(BaseModel):
     height_param: str | None = None
 
 
+DrawTool = Literal["lot", "rectangle", "polygon", "freehand", "route", "point"]
+
+
+class Draw(BaseModel):
+    """How a type is drawn on the map, and what counts as a valid shape for it."""
+
+    tools: list[DrawTool]
+    min_area_m2: float | None = None
+    max_area_m2: float | None = None
+    min_length_m: float | None = None
+    max_length_m: float | None = None
+    snap: Literal["vertices", "street", "none"] = "vertices"
+    """Areas snap to building and lot corners; points can snap to the nearest street."""
+
+
 class TypeDef(BaseModel):
     type: str
     label: str
@@ -48,6 +63,9 @@ class TypeDef(BaseModel):
     storey_m: float | None = None
     impact_metrics: list[str]
     relevant_to: list[str]
+    draw: Draw
+    green_space: bool = False
+    """Counts as public green space (parks, community gardens) when it covers a site."""
 
     def resolve_params(self, given: dict[str, Any]) -> dict[str, float]:
         """Defaults filled in; raises ValueError on unknown or out-of-range values."""
@@ -131,8 +149,8 @@ class Stack(BaseModel):
 
     @property
     def site_park(self) -> bool:
-        """A park covering the whole site at ground level."""
-        return not self.mixed and self.parts[0][1].type == "park"
+        """Green space (a park or garden) covering the whole site at ground level."""
+        return not self.mixed and self.parts[0][1].green_space
 
     @property
     def roof_parks(self) -> list[Part]:

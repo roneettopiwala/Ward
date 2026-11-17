@@ -33,6 +33,8 @@ const THEMES: Record<string, string> = {
   walkability: "Walkability",
   neighbourhood_character: "Neighbourhood character",
   events_and_tourism: "Events & tourism",
+  cycling: "Cycling",
+  road_safety: "Road safety",
 };
 
 const STANCE: Record<Stance, { label: string; text: string; border: string; bg: string }> = {
@@ -358,6 +360,7 @@ export default function ResultsPanel() {
   );
   const focused = useMapStore((s) => s.focusedPersona);
   const closePanel = useMapStore((s) => s.closePanel);
+  const drawing = useMapStore((s) => s.tool !== "select");
   const [tab, setTab] = useState<Tab>("summary");
 
   // A pin clicked on the map opens its card.
@@ -367,8 +370,8 @@ export default function ResultsPanel() {
     if (focused) setTab("personas");
   }
 
-  // The preview card takes this place while a change is being drafted.
-  if (!proposal || !analysis || draft) return null;
+  // The preview card (or the drawing panel) takes this place.
+  if (!proposal || !analysis || draft || drawing) return null;
   const types = catalogMap(catalog);
   const previous =
     parentAnalysis?.sentiment && proposal.version > 1

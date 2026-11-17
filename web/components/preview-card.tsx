@@ -4,7 +4,7 @@ import { ArrowRight, Plus, X } from "lucide-react";
 import { useState } from "react";
 
 import { analyzeProposal } from "@/lib/analysis";
-import { catalogMap, homesOf, partLabel, stackHeight, stackLabel } from "@/lib/parts";
+import { catalogMap, homesOf, partLabel, stackHeight, stackLabel, typesFor } from "@/lib/parts";
 import { useMapStore } from "@/lib/store";
 import type { CatalogParam, CatalogType, Part } from "@/lib/types";
 
@@ -130,9 +130,15 @@ export default function PreviewCard() {
 
   if (!draft || !feature) return null;
   const types = catalogMap(catalog);
+  // Only types that fit the site's shape: a line takes a bike lane, not a condo.
+  const fitting = typesFor(catalog, feature.geometry);
+  const hasParams = draft.parts.some((p) => Object.keys(types.get(p.type)?.params ?? {}).length > 0);
+  const single = fitting.every((t) => t.geometry !== "polygon");
   const { heightM, storeys } = stackHeight(draft.parts, types);
   const homes = homesOf(draft.parts);
   const siteName = feature.name ?? "Selected site";
+  // Only a selected building can be "kept"; a drawn site has already said what it removes.
+  const keepsExisting = !draft.replacesExisting && feature.kind !== "drawn";
 
   const analyze = () => {
     const proposal = commitDraft();
@@ -180,9 +186,9 @@ export default function PreviewCard() {
         <Label>Interpreted as · {stackLabel(draft.parts, types)}</Label>
         <ul className="mt-2 flex flex-wrap items-center gap-2" aria-label="Parts, bottom to top">
           {draft.parts.map((_, i) => (
-            <PartChip key={i} parts={draft.parts} index={i} catalog={catalog} />
+            <PartChip key={i} parts={draft.parts} index={i} catalog={fitting} />
           ))}
-          <li>
+          <li hidden={single}>
             <button
               type="button"
               aria-expanded={adding}
@@ -194,9 +200,9 @@ export default function PreviewCard() {
             </button>
           </li>
         </ul>
-        {adding && (
+        {adding && !single && (
           <div className="mt-2 flex flex-wrap gap-2">
-            {catalog.map((t) => (
+            {fitting.map((t) => (
               <button
                 key={t.type}
                 type="button"
@@ -212,7 +218,7 @@ export default function PreviewCard() {
           </div>
         )}
 
-        <div className="mt-5">
+        <div className="mt-5" hidden={!hasParams}>
           <Label>Parameters</Label>
           {draft.parts.map((part, i) => {
             const t = types.get(part.type);
@@ -244,11 +250,11 @@ export default function PreviewCard() {
           )}
         </div>
 
-        {(draft.assumptions.length > 0 || !draft.replacesExisting) && (
+        {(draft.assumptions.length > 0 || keepsExisting) && (
           <div className="mt-5">
             <Label>Assumptions</Label>
             <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-xs leading-snug text-fg-muted">
-              {!draft.replacesExisting && (
+              {keepsExisting && (
                 <li className="text-fg">
                   Ward can&apos;t build beside an existing building yet, so this preview replaces {siteName}.
                 </li>

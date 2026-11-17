@@ -1,15 +1,53 @@
 import { create } from "zustand";
 
 import { catalogMap, defaultParams, insertPart } from "./parts";
+import type { ShapeCheck } from "./api";
 import type {
   Analysis,
   BaseFeature,
   CatalogType,
   Fid,
+  Geometry,
   Part,
   Proposal,
   SelectionStatus,
 } from "./types";
+
+export type Tool = "select" | "area" | "line" | "point";
+export type AreaTool = "lot" | "rectangle" | "polygon" | "freehand";
+
+/** A shape being drawn, before it becomes a site to build on. */
+export type Drawing = {
+  areaTool: AreaTool;
+  /** The shape so far: polygon, routed line or point. Null before the first click. */
+  geometry: Geometry | null;
+  /** Corners placed (areas) or waypoints clicked (lines). */
+  points: number;
+  /** The shape is complete and can still be adjusted; Finish shape checks it. */
+  complete: boolean;
+  /** Streets a routed line follows. */
+  streets: string[];
+  busy: boolean;
+  error: string | null;
+  /** The server's check, once Finish shape is pressed. */
+  check: ShapeCheck | null;
+};
+
+const emptyDrawing = (areaTool: AreaTool = "polygon"): Drawing => ({
+  areaTool,
+  geometry: null,
+  points: 0,
+  complete: false,
+  streets: [],
+  busy: false,
+  error: null,
+  check: null,
+});
+
+/** The base features a proposal on this site replaces. */
+export function replacesOf(feature: BaseFeature): Fid[] {
+  return feature.drawn ? feature.drawn.replaces : [feature.fid];
+}
 
 /** The edit overlay: base data minus `removed`, plus `proposals`. */
 type Edits = {
@@ -32,8 +70,10 @@ export type Draft = {
 type MapState = Edits & {
   selected: Fid | null;
   selectionStatus: SelectionStatus;
-  /** Every base feature the user has selected, kept for outlines and footprints. */
+  /** Every base feature the user has selected, kept for outlines and geometry. */
   features: Record<Fid, BaseFeature>;
+  /** Other features under the click that made the selection, for switching to. */
+  alsoHere: BaseFeature[];
   /** Snapshots of the edits before each action, newest last. */
   history: Edits[];
   catalog: CatalogType[];
@@ -45,8 +85,10 @@ type MapState = Edits & {
   focusedPersona: string | null;
   /** Text in the prompt bar (set from outside by "Edit prompt"). */
   promptText: string;
+  tool: Tool;
+  drawing: Drawing;
 
-  select: (feature: BaseFeature | null, status?: SelectionStatus) => void;
+  select: (feature: BaseFeature | null, status?: SelectionStatus, alsoHere?: BaseFeature[]) => void;
   /** Swap a pending selection for what it resolved to, if it is still selected. */
   resolve: (pendingFid: Fid, feature: BaseFeature, status: SelectionStatus) => void;
   remove: (fid: Fid) => void;
@@ -65,6 +107,11 @@ type MapState = Edits & {
   focusPersona: (personaId: string | null) => void;
   setPromptText: (text: string) => void;
   undo: () => void;
+  /** Pick a tool; drawing tools start a fresh shape. */
+  setTool: (tool: Tool, areaTool?: AreaTool) => void;
+  patchDrawing: (patch: Partial<Drawing>) => void;
+  /** Turn the finished shape into a site and select it. */
+  finishDrawing: (site: BaseFeature) => void;
 };
 
 const snapshot = ({ removed, proposals }: Edits): Edits => ({ removed, proposals });
@@ -78,6 +125,7 @@ export const useMapStore = create<MapState>()((set, get) => {
     selected: null,
     selectionStatus: "ready",
     features: {},
+    alsoHere: [],
     removed: [],
     proposals: [],
     history: [],
@@ -87,17 +135,20 @@ export const useMapStore = create<MapState>()((set, get) => {
     activeProposal: null,
     focusedPersona: null,
     promptText: "",
+    tool: "select",
+    drawing: emptyDrawing(),
 
-    select: (feature, status = "ready") =>
+    select: (feature, status = "ready", alsoHere = []) =>
       set((s) =>
         feature
           ? {
               selected: feature.fid,
               selectionStatus: status,
               features: { ...s.features, [feature.fid]: feature },
+              alsoHere,
               draft: null,
             }
-          : { selected: null, draft: null },
+          : { selected: null, alsoHere: [], draft: null },
       ),
 
     resolve: (pendingFid, feature, status) =>
@@ -129,10 +180,10 @@ export const useMapStore = create<MapState>()((set, get) => {
     editProposal: (proposalId) =>
       set((s) => {
         const p = s.proposals.find((x) => x.id === proposalId);
-        if (!p?.replaces[0]) return {};
+        if (!p) return {};
         return {
           draft: {
-            fid: p.replaces[0],
+            fid: p.siteFid,
             parts: p.parts,
             prompt: null,
             assumptions: [],
@@ -180,8 +231,9 @@ export const useMapStore = create<MapState>()((set, get) => {
       const proposal: Proposal = {
         id: crypto.randomUUID(),
         parts: draft.parts,
-        geometry: feature.footprint,
-        replaces: [feature.fid],
+        geometry: feature.geometry,
+        siteFid: feature.fid,
+        replaces: replacesOf(feature),
         prompt: draft.prompt,
         assumptions: draft.assumptions,
         parentId: parent?.id ?? null,
@@ -189,7 +241,7 @@ export const useMapStore = create<MapState>()((set, get) => {
       };
       set({
         history: [...s.history, snapshot(s)],
-        removed: s.removed.includes(feature.fid) ? s.removed : [...s.removed, feature.fid],
+        removed: [...new Set([...s.removed, ...replacesOf(feature)])],
         // A new version takes its parent's place on the map.
         proposals: parent
           ? s.proposals.map((p) => (p.id === parent.id ? proposal : p))
@@ -213,6 +265,26 @@ export const useMapStore = create<MapState>()((set, get) => {
     focusPersona: (focusedPersona) => set({ focusedPersona }),
 
     setPromptText: (promptText) => set({ promptText }),
+
+    setTool: (tool, areaTool) =>
+      set((s) => ({
+        tool,
+        drawing: emptyDrawing(areaTool ?? s.drawing.areaTool),
+        ...(tool === "select" ? {} : { selected: null, alsoHere: [], draft: null }),
+      })),
+
+    patchDrawing: (patch) => set((s) => ({ drawing: { ...s.drawing, ...patch } })),
+
+    finishDrawing: (site) =>
+      set((s) => ({
+        tool: "select",
+        drawing: emptyDrawing(s.drawing.areaTool),
+        selected: site.fid,
+        selectionStatus: "ready",
+        features: { ...s.features, [site.fid]: site },
+        alsoHere: [],
+        draft: null,
+      })),
 
     undo: () =>
       set((s) => {

@@ -3,7 +3,7 @@
  * (Stack): extruded parts stack, and a flat part (a park) covers the site when
  * alone and sits on the roof otherwise.
  */
-import type { CatalogType, Part } from "./types";
+import type { CatalogType, Geometry, Part } from "./types";
 
 export type Catalog = Map<string, CatalogType>;
 
@@ -86,4 +86,15 @@ export function stackSummary(parts: Part[], catalog: Catalog): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** Catalog types that can go on a site of this shape (area, line or point). */
+export function typesFor(catalog: CatalogType[], geometry: Geometry): CatalogType[] {
+  const shape =
+    geometry.type === "LineString" || geometry.type === "MultiLineString"
+      ? "line"
+      : geometry.type === "Point" || geometry.type === "MultiPoint"
+        ? "point"
+        : "polygon";
+  return catalog.filter((t) => t.geometry === shape);
 }

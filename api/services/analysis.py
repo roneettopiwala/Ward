@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from services import impact, llm, personas, proposals, reactions
+from services import areas, impact, llm, personas, proposals, reactions
 from services.catalog import Stack
 from services.facts import FactSheet, ProposalInput, build_fact_sheet
 from services.pros_cons import ProsConsResult, generate
@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 CACHE_TTL_S = 7 * 24 * 3600
 # Below this share of valid reactions, the persona step counts as failed.
 MIN_REACTION_SHARE = 0.5
+# How many personas react to each proposal, across the neighbourhoods it affects.
+PERSONAS_PER_PROPOSAL = 15
 
 
 class AnalysisEvent(BaseModel):
@@ -128,15 +130,30 @@ async def _personas(
     emit: Emit,
 ) -> None:
     async with engine.connect() as conn:
-        nid = await personas.neighbourhood_of(conn, proposal.geometry)
-    if nid is None:
-        raise PersonaError("This site is outside the neighbourhoods Ward has data for.")
+        area = await areas.resolve(conn, proposal.geometry, stack.impact_radius_m)
+    seats = areas.persona_seats(area, PERSONAS_PER_PROPOSAL)
+    if not seats:
+        if area.missing:
+            raise PersonaError(
+                f"Ward hasn't loaded city data for {', '.join(area.missing)} yet, "
+                "so there are no personas here."
+            )
+        raise PersonaError("This site is outside the City of Toronto, where Ward has data.")
+
+    # Personas are made once per neighbourhood, on first use, then reused.
     async with engine.connect() as conn:
-        ready = await personas.load(conn, nid)
-    if not ready:
-        await emit(_status("generating personas"))
-        ready, _ = await personas.ensure(engine, nid)
-    chosen = personas.select(ready, stack.relevant_to)
+        pools = {nid: await personas.load(conn, nid) for nid in seats}
+    new = [nid for nid, pool in pools.items() if not pool]
+    if new:
+        names = [n.name for n in area.neighbourhoods if n.id in new]
+        await emit(_status(f"generating personas for {', '.join(names)}"))
+        made = await asyncio.gather(*(personas.ensure(engine, nid) for nid in new))
+        pools.update({nid: pool for nid, (pool, _) in zip(new, made, strict=True)})
+    chosen = [
+        p
+        for nid, n in seats.items()
+        for p in personas.select(pools[nid], stack.relevant_to, limit=n)
+    ]
 
     async with engine.connect() as conn:
         impacts = await impact.compute(

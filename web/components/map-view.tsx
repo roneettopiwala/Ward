@@ -3,16 +3,11 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
+import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
 
 import { fetchCatalog } from "@/lib/api";
-
-import {
-  BUILDINGS_3D_LAYER,
-  buildingsFilter,
-  highlightOverlay,
-  setSelectedState,
-} from "@/lib/basemap";
+import { HIDEABLE_LAYERS, HIT_LAYERS, notHidden, setSelectedState } from "@/lib/city-layers";
 import {
   buildStyle,
   CORNER_IMAGE,
@@ -27,16 +22,18 @@ import {
   proposalsCollection,
   REMOVED_SOURCE,
   SELECTION_CORNERS_SOURCE,
-  SELECTION_HIGHLIGHT_SOURCE,
   SELECTION_SOURCE,
   toCollection,
 } from "@/lib/map-style";
 import { catalogMap, largestRadius } from "@/lib/parts";
 import { selectAt } from "@/lib/selection";
-import { type Draft, useMapStore } from "@/lib/store";
+import { type Draft, replacesOf, useMapStore } from "@/lib/store";
 import { type MapTokens, readMapTokens } from "@/lib/tokens";
 import type { Geometry, Proposal } from "@/lib/types";
 
+import { DrawController } from "@/lib/draw";
+
+import DrawPanel, { DrawHints } from "./draw-panel";
 import MapControls from "./map-controls";
 import PersonaPins from "./persona-pins";
 import PreviewCard from "./preview-card";
@@ -53,8 +50,9 @@ function draftProposal(state: State, draft: Draft): Proposal | null {
   return {
     id: "draft",
     parts: draft.parts,
-    geometry: feature.footprint,
-    replaces: [draft.fid],
+    geometry: feature.geometry,
+    siteFid: draft.fid,
+    replaces: replacesOf(feature),
     prompt: draft.prompt,
     assumptions: draft.assumptions,
     parentId: draft.parentId,
@@ -79,10 +77,13 @@ export const INITIAL_VIEW = {
   bearing: -17,
 };
 
+let pmtilesRegistered = false;
+
 export default function MapView() {
   const container = useRef<HTMLDivElement>(null);
   const tokens = useRef<MapTokens | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
+  const [drawController, setDrawController] = useState<DrawController | null>(null);
 
   useEffect(() => {
     fetchCatalog()
@@ -94,32 +95,46 @@ export default function MapView() {
     let instance: MapLibreMap | null = null;
     let cancelled = false;
 
-    void import("maplibre-gl").then(({ Map, setWorkerUrl }) => {
+    void import("maplibre-gl").then(({ Map, addProtocol, setWorkerUrl }) => {
       if (cancelled || !container.current) return;
       // MapLibre looks for its worker next to its own file, which bundling breaks.
       setWorkerUrl(new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).href);
+      if (!pmtilesRegistered) {
+        addProtocol("pmtiles", new Protocol().tile);
+        pmtilesRegistered = true;
+      }
       const t = readMapTokens();
       tokens.current = t;
       instance = new Map({
         container: container.current,
-        style: buildStyle(t),
+        style: buildStyle(t, window.location.origin),
         ...INITIAL_VIEW,
         maxPitch: 70,
         attributionControl: false,
       });
       const m = instance;
+      let controller: DrawController | null = null;
       m.on("load", () => {
         m.addImage(CORNER_IMAGE, cornerImage(t));
+        controller = new DrawController(m, t);
+        setDrawController(controller);
         setMap(m);
       });
+      m.on("remove", () => controller?.dispose());
+      m.on("dblclick", (e: MapMouseEvent) => controller?.handleDoubleClick(e));
       m.on("click", (e: MapMouseEvent) => {
+        // While drawing, clicks belong to the shape.
+        if (controller?.handleClick(e)) return;
         // A persona pin opens that persona's card instead of selecting a building.
         const pin = m.queryRenderedFeatures(e.point, { layers: [PERSONA_PINS_LAYER] })[0];
         if (pin) useMapStore.getState().focusPersona(String(pin.properties.id));
         else void selectAt(m, e.point);
       });
-      m.on("mouseenter", BUILDINGS_3D_LAYER, () => (m.getCanvas().style.cursor = "pointer"));
-      m.on("mouseleave", BUILDINGS_3D_LAYER, () => (m.getCanvas().style.cursor = ""));
+      const drawing = () => useMapStore.getState().tool !== "select";
+      for (const layer of HIT_LAYERS) {
+        m.on("mouseenter", layer, () => !drawing() && (m.getCanvas().style.cursor = "pointer"));
+        m.on("mouseleave", layer, () => !drawing() && (m.getCanvas().style.cursor = ""));
+      }
     });
 
     return () => {
@@ -128,33 +143,43 @@ export default function MapView() {
     };
   }, []);
 
+  // Backspace takes back the last corner or waypoint while drawing.
+  useEffect(() => {
+    if (!drawController) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "Backspace" && useMapStore.getState().tool !== "select") {
+        e.preventDefault();
+        drawController.undoPoint();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawController]);
+
   useEffect(() => {
     if (!map) return;
     const source = (id: string) => map.getSource<GeoJSONSource>(id);
 
     const sync = (state: State, prev?: State) => {
-      if (state.selected !== prev?.selected) {
+      const selectedFeature = (s: State | undefined) => (s?.selected ? s.features[s.selected] : null);
+      // Also redraw when the tile's clipped shape is swapped for the full one.
+      if (selectedFeature(state) !== selectedFeature(prev)) {
         if (prev?.selected) setSelectedState(map, prev.selected, false);
-        const feature = state.selected ? state.features[state.selected] : null;
+        const feature = selectedFeature(state);
         if (feature) setSelectedState(map, feature.fid, true);
-        source(SELECTION_SOURCE)?.setData(toCollection(feature ? [feature.footprint] : []));
-        const overlay = feature ? highlightOverlay(feature.fid) : null;
-        source(SELECTION_HIGHLIGHT_SOURCE)?.setData({
-          type: "FeatureCollection",
-          features: overlay
-            ? [{ type: "Feature", properties: { height: overlay.heightM }, geometry: overlay.footprint }]
-            : [],
-        });
+        source(SELECTION_SOURCE)?.setData(toCollection(feature ? [feature.geometry] : []));
         source(SELECTION_CORNERS_SOURCE)?.setData(
           feature ? cornerPoints(feature, map.getBearing()) : toCollection([]),
         );
       }
       if (state.removed !== prev?.removed || state.draft?.fid !== prev?.draft?.fid) {
-        // A building being replaced in the picker is hidden while its preview shows.
-        const hidden = state.draft ? [...state.removed, state.draft.fid] : state.removed;
-        map.setFilter(BUILDINGS_3D_LAYER, buildingsFilter(hidden));
-        const footprints = state.removed.flatMap((fid) => state.features[fid]?.footprint ?? []);
-        source(REMOVED_SOURCE)?.setData(toCollection(footprints));
+        // A feature being replaced is hidden while its preview shows.
+        const site = state.draft ? state.features[state.draft.fid] : undefined;
+        const hidden = site ? [...state.removed, ...replacesOf(site)] : state.removed;
+        for (const layer of HIDEABLE_LAYERS) map.setFilter(layer, notHidden(hidden));
+        const outlines = state.removed.flatMap((fid) => state.features[fid]?.geometry ?? []);
+        source(REMOVED_SOURCE)?.setData(toCollection(outlines));
       }
       if (
         state.proposals !== prev?.proposals ||
@@ -204,6 +229,8 @@ export default function MapView() {
           <ResultsPanel />
           <PreviewCard />
           <PromptBar />
+          {drawController && <DrawPanel controller={drawController} />}
+          <DrawHints />
         </>
       )}
     </div>

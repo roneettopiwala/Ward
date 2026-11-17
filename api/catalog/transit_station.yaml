@@ -1,0 +1,30 @@
+# A new rapid transit stop.
+type: transit_station
+label: Transit station
+description: >-
+  A new transit stop or station: subway, LRT or GO station, or a major bus or
+  streetcar stop or hub. Tag the line or kind, e.g. ["subway"].
+geometry: point
+draw:
+  tools: [point]
+  snap: street
+params: {}
+render:
+  kind: point
+  color: accent
+impact_radius_m: 800
+impact_metrics:
+  - replaced
+  - site
+  - station_access
+  - transit
+  - population
+  - schools
+  - groceries
+  - retail_nearby
+relevant_to:
+  - transit_riders
+  - commuters
+  - seniors
+  - local_business
+  - residents

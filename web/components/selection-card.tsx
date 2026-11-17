@@ -5,22 +5,52 @@ import { ArrowDown, X } from "lucide-react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useEffect, useState } from "react";
 
+import { selectFeature } from "@/lib/selection";
 import { useMapStore } from "@/lib/store";
-import type { BaseFeature, SelectionStatus, TransitStop, Zoning } from "@/lib/types";
+import {
+  type BaseFeature,
+  type FeatureKind,
+  REPLACEABLE,
+  type SelectionStatus,
+  type TransitStop,
+  type Zoning,
+} from "@/lib/types";
 
 const CARD_WIDTH = 320;
 const GAP = 16;
 const EDGE = 16;
 
 const NOTICES: Partial<Record<SelectionStatus, string>> = {
-  "outside-area": "No city data for this area yet.",
-  "not-found": "This building isn't in the city's building data.",
-  error: "Couldn't load city data for this building.",
+  "not-found": "This isn't in Ward's city data yet.",
+  error: "Couldn't load city data for this.",
 };
 
-/** Screen position just east of the footprint, kept inside the viewport. */
+const KIND_LABEL: Record<FeatureKind, string> = {
+  building: "Building",
+  parcel: "Lot",
+  park: "Park",
+  transit: "Transit stop",
+  cycling: "Cycling route",
+  street: "Street",
+  drawn: "Drawn area",
+};
+
+function kindLabel(feature: BaseFeature): string {
+  if (feature.kind !== "drawn") return KIND_LABEL[feature.kind];
+  const t = feature.geometry.type;
+  return t === "LineString" || t === "MultiLineString" ? "Drawn line" : t === "Point" ? "Drawn point" : "Drawn area";
+}
+
+const FACILITY: Record<string, string> = {
+  painted: "Painted bike lane",
+  protected: "Protected cycle track",
+  trail: "Multi-use trail",
+  shared: "Shared lane (sharrows)",
+};
+
+/** Screen position just east of the feature, kept inside the viewport. */
 function anchorFor(map: MapLibreMap, feature: BaseFeature): { left: number; top: number } {
-  const [, s, e, n] = bbox(feature.footprint);
+  const [, s, e, n] = bbox(feature.geometry);
   const point = map.project([e, (s + n) / 2]);
   const { clientWidth, clientHeight } = map.getContainer();
   const fitsRight = point.x + GAP + CARD_WIDTH < clientWidth - EDGE;
@@ -35,7 +65,63 @@ function anchorFor(map: MapLibreMap, feature: BaseFeature): { left: number; top:
 const number = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 
 function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  const words = value.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const metres = (m: number | null | undefined) =>
+  m ? (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${number.format(m)} m`) : "—";
+const area = (m2: number | null | undefined) =>
+  m2 ? (m2 >= 10_000 ? `${(m2 / 10_000).toFixed(1)} ha` : `${number.format(m2)} m²`) : "—";
+
+/** The facts shown for each kind of feature. */
+function fieldsFor(feature: BaseFeature): [string, string][] {
+  const d = feature.details;
+  const zoning: [string, string] = ["Zoning", d ? zoningText(d.zoning) : "—"];
+  switch (feature.kind) {
+    case "building":
+      return [
+        ["Use", feature.use ? capitalize(feature.use) : "—"],
+        ["Height", feature.heightM ? `${feature.heightM} m` : "—"],
+        ["Lot area", area(d?.lotAreaM2)],
+        zoning,
+      ];
+    case "parcel":
+    case "park":
+      return [[feature.kind === "park" ? "Area" : "Lot area", area(d?.lotAreaM2)], zoning];
+    case "transit":
+      return [
+        ["Mode", d?.mode ? capitalize(d.mode) : "—"],
+        ["Routes", d?.routes.length ? d.routes.join(", ") : "—"],
+      ];
+    case "cycling":
+      return [
+        ["Facility", d?.facilityType ? (FACILITY[d.facilityType] ?? d.facilityType) : "—"],
+        ["Installed", d?.installed ? String(d.installed) : "—"],
+        ["Segment length", metres(d?.lengthM)],
+      ];
+    case "street":
+      return [
+        ["Road class", d?.roadClass ? capitalize(d.roadClass) : "—"],
+        ["Segment length", metres(d?.lengthM)],
+      ];
+    case "drawn": {
+      const site = feature.drawn;
+      const removes = site?.replaces.length ?? 0;
+      const size: [string, string][] = site?.lengthM
+        ? [["Length", metres(site.lengthM)]]
+        : site?.areaM2
+          ? [["Area", area(site.areaM2)]]
+          : [];
+      return [
+        ...size,
+        ["Removes", removes ? `${removes} building${removes === 1 ? "" : "s"}` : "Nothing"],
+        ...(site?.streets.length
+          ? ([["Follows", site.streets.slice(0, 3).join(", ")]] as [string, string][])
+          : []),
+      ];
+    }
+  }
 }
 
 export function zoningText(zoning: Zoning | null): string {
@@ -91,6 +177,7 @@ function Stops({ stops }: { stops: TransitStop[] }) {
 export default function SelectionCard({ map }: { map: MapLibreMap }) {
   const feature = useMapStore((s) => (s.selected ? s.features[s.selected] : null));
   const status = useMapStore((s) => s.selectionStatus);
+  const alsoHere = useMapStore((s) => s.alsoHere);
   const select = useMapStore((s) => s.select);
   const remove = useMapStore((s) => s.remove);
   const draft = useMapStore((s) => s.draft);
@@ -110,10 +197,13 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
   const loading = status === "loading";
   const details = feature.details;
   const notice = NOTICES[status];
+  const replaceable = REPLACEABLE.includes(feature.kind);
+  const label = kindLabel(feature);
+  const subtitle = details?.address && details.address !== feature.name ? details.address : null;
 
   return (
     <section
-      aria-label="Selected building"
+      aria-label={`Selected ${label.toLowerCase()}`}
       aria-busy={loading}
       style={{ left, top, width: CARD_WIDTH }}
       className="absolute z-10 rounded-panel border border-border bg-surface p-4 shadow-2xl shadow-black/40"
@@ -121,7 +211,7 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
       <header className="flex items-center justify-between">
         <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-fg-subtle">
           <span className="size-2 bg-accent" />
-          Selected · Existing
+          Selected · {label}
         </p>
         <button
           type="button"
@@ -134,38 +224,62 @@ export default function SelectionCard({ map }: { map: MapLibreMap }) {
       </header>
 
       <h2 className="mt-3 text-lg font-semibold">
-        {feature.name ?? (loading ? "Loading…" : "Unnamed building")}
+        {feature.name ?? (loading ? "Loading…" : `Unnamed ${label.toLowerCase()}`)}
       </h2>
-      {details?.address && details.address !== feature.name && (
-        <p className="text-sm text-fg-muted">{details.address}</p>
-      )}
+      {subtitle && <p className="text-sm text-fg-muted">{subtitle}</p>}
       {notice && <p className="mt-2 text-sm text-fg-subtle">{notice}</p>}
+      {feature.drawn?.warnings.map((w) => (
+        <p key={w} className="mt-2 text-sm text-fg-muted">
+          {w}
+        </p>
+      ))}
 
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
-        <Field label="Use" value={feature.use ? capitalize(feature.use) : "—"} loading={loading} />
-        <Field label="Height" value={feature.heightM ? `${feature.heightM} m` : "—"} loading={loading} />
-        <Field
-          label="Lot area"
-          value={details?.lotAreaM2 ? `${number.format(details.lotAreaM2)} m²` : "—"}
-          loading={loading}
-        />
-        <Field label="Zoning" value={details ? zoningText(details.zoning) : "—"} loading={loading} />
+        {fieldsFor(feature).map(([label, value]) => (
+          <Field key={label} label={label} value={value} loading={loading} />
+        ))}
       </dl>
 
       {details && <Stops stops={details.nearestStops} />}
 
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-xs text-fg-subtle">
-          <ArrowDown className="size-3.5" /> Describe what to build in the bar below
-        </p>
-        <button
-          type="button"
-          onClick={() => remove(feature.fid)}
-          className="h-9 shrink-0 rounded-control border border-border-strong px-3 text-sm hover:bg-surface-raised"
-        >
-          Remove
-        </button>
-      </div>
+      {alsoHere.length > 0 && (
+        <div className="mt-4">
+          <Label>Also here</Label>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            {alsoHere.map((other) => (
+              <li key={other.fid}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void selectFeature(other, [feature, ...alsoHere.filter((a) => a.fid !== other.fid)])
+                  }
+                  className="max-w-[280px] truncate rounded-control border border-border px-2 py-1 text-left text-xs text-fg-muted hover:text-fg"
+                >
+                  {KIND_LABEL[other.kind]}
+                  {other.name ? ` · ${other.name}` : ""}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {replaceable ? (
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-xs text-fg-subtle">
+            <ArrowDown className="size-3.5" /> Describe what to build in the bar below
+          </p>
+          <button
+            type="button"
+            onClick={() => (feature.kind === "drawn" ? select(null) : remove(feature.fid))}
+            className="h-9 shrink-0 rounded-control border border-border-strong px-3 text-sm hover:bg-surface-raised"
+          >
+            {feature.kind === "drawn" ? "Discard" : "Remove"}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-4 text-xs text-fg-subtle">Shown for information. Proposals replace buildings, lots and parks.</p>
+      )}
     </section>
   );
 }

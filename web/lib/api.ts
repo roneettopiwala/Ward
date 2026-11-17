@@ -1,12 +1,14 @@
-import type { MultiPolygon, Polygon } from "geojson";
-
 import type {
   BaseFeature,
   CatalogParam,
   CatalogType,
+  DrawRules,
+  DrawTool,
   Fact,
   FactSheet,
+  FeatureKind,
   Fid,
+  Geometry,
   ParseResult,
   Part,
   PersonaCard,
@@ -19,6 +21,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type FeatureDetailResponse = {
   fid: string;
+  kind: FeatureKind;
   name: string | null;
   use: string | null;
   height_m: number | null;
@@ -32,32 +35,28 @@ type FeatureDetailResponse = {
     routes: string[];
     distance_m: number;
   }[];
-  footprint: Polygon | MultiPolygon;
+  mode: string | null;
+  routes: string[];
+  road_class: string | null;
+  facility_type: string | null;
+  installed: number | null;
+  length_m: number | null;
+  geometry: Geometry;
 };
 
-export type FeatureAt = { fid: Fid } | { missing: "outside_area" | "no_building" };
-
-/** Our building at a point, or why there isn't one. */
-export async function featureAt([lng, lat]: [number, number]): Promise<FeatureAt> {
-  const res = await fetch(`${API_URL}/features/at?lng=${lng}&lat=${lat}`);
-  if (res.status === 404) {
-    const { detail } = (await res.json()) as { detail: "outside_area" | "no_building" };
-    return { missing: detail };
-  }
-  if (!res.ok) throw new Error(`features/at: HTTP ${res.status}`);
-  return (await res.json()) as { fid: Fid };
-}
-
-export async function featureDetail(fid: Fid): Promise<BaseFeature> {
+/** Any map feature with its details; null when it isn't in our data. */
+export async function featureDetail(fid: Fid): Promise<BaseFeature | null> {
   const res = await fetch(`${API_URL}/features/${encodeURIComponent(fid)}`);
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`features/${fid}: HTTP ${res.status}`);
   const d = (await res.json()) as FeatureDetailResponse;
   return {
     fid: d.fid,
+    kind: d.kind,
     name: d.name,
     use: d.use,
     heightM: d.height_m,
-    footprint: d.footprint,
+    geometry: d.geometry,
     details: {
       address: d.address,
       lotAreaM2: d.lot_area_m2,
@@ -73,6 +72,12 @@ export async function featureDetail(fid: Fid): Promise<BaseFeature> {
         routes: s.routes,
         distanceM: s.distance_m,
       })),
+      mode: d.mode,
+      routes: d.routes,
+      roadClass: d.road_class,
+      facilityType: d.facility_type,
+      installed: d.installed,
+      lengthM: d.length_m,
     },
   };
 }
@@ -85,6 +90,14 @@ type CatalogResponse = {
   render: { kind: CatalogType["render"]["kind"]; color: string; height_param: string | null };
   impact_radius_m: number;
   storey_m: number | null;
+  draw: {
+    tools: DrawTool[];
+    min_area_m2: number | null;
+    max_area_m2: number | null;
+    min_length_m: number | null;
+    max_length_m: number | null;
+    snap: DrawRules["snap"];
+  };
 }[];
 
 export type ParseRequest = {
@@ -149,7 +162,84 @@ export async function fetchCatalog(): Promise<CatalogType[]> {
     render: { kind: t.render.kind, color: t.render.color, heightParam: t.render.height_param },
     impactRadiusM: t.impact_radius_m,
     storeyM: t.storey_m,
+    draw: {
+      tools: t.draw.tools,
+      minAreaM2: t.draw.min_area_m2,
+      maxAreaM2: t.draw.max_area_m2,
+      minLengthM: t.draw.min_length_m,
+      maxLengthM: t.draw.max_length_m,
+      snap: t.draw.snap,
+    },
   }));
+}
+
+export type Route = {
+  geometry: Geometry;
+  lengthM: number;
+  streets: string[];
+  /** Each clicked point, moved to the intersection the route uses. */
+  waypoints: [number, number][];
+};
+
+/** A line along the streets through the points, in order. Throws with the API's message. */
+export async function routeLine(points: [number, number][], signal?: AbortSignal): Promise<Route> {
+  const res = await fetch(`${API_URL}/draw/route`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ points }),
+    signal,
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, "Couldn't route that line."));
+  const d = (await res.json()) as { geometry: Geometry; length_m: number; streets: string[]; waypoints: [number, number][] };
+  return { geometry: d.geometry, lengthM: d.length_m, streets: d.streets, waypoints: d.waypoints };
+}
+
+export type ShapeCheck = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  areaM2: number | null;
+  lengthM: number | null;
+  /** Buildings the shape covers. */
+  overlaps: { fid: Fid; name: string | null }[];
+  parks: string[];
+};
+
+/** Check a drawn shape: size, inside Toronto, off water and highways, what it covers. */
+export async function validateShape(geometry: Geometry, type?: string): Promise<ShapeCheck> {
+  const res = await fetch(`${API_URL}/draw/validate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ geometry, type }),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, "Couldn't check that shape."));
+  const d = (await res.json()) as {
+    ok: boolean;
+    errors: string[];
+    warnings: string[];
+    area_m2: number | null;
+    length_m: number | null;
+    overlaps: { fid: Fid; name: string | null }[];
+    parks: string[];
+  };
+  return {
+    ok: d.ok,
+    errors: d.errors,
+    warnings: d.warnings,
+    areaM2: d.area_m2,
+    lengthM: d.length_m,
+    overlaps: d.overlaps,
+    parks: d.parks,
+  };
+}
+
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /** Store a proposal; returns the server's id. */

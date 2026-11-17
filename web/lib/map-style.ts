@@ -3,28 +3,23 @@ import buffer from "@turf/buffer";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FilterSpecification, StyleSpecification } from "maplibre-gl";
 
-import {
-  BASEMAP_SOURCE,
-  basemapGlyphs,
-  basemapLayers,
-  basemapSource,
-  buildingsLayer,
-  FONT,
-  labelLayers,
-} from "./basemap";
+import { BASEMAP_SOURCE, basemapGlyphs, basemapLayers, basemapSource, FONT, labelLayers } from "./basemap";
+import { buildingsLayer, citySources, groundLayers, transitLayer } from "./city-layers";
 import { partHeight } from "./parts";
 import type { MapTokens } from "./tokens";
 import type { BaseFeature, CatalogType, PersonaCard, Proposal } from "./types";
 
 export const SELECTION_SOURCE = "selection";
 export const SELECTION_CORNERS_SOURCE = "selection-corners";
-export const SELECTION_HIGHLIGHT_SOURCE = "selection-highlight";
 export const REMOVED_SOURCE = "removed";
 export const PROPOSALS_SOURCE = "proposals";
 export const IMPACT_SOURCE = "impact";
 export const PERSONAS_SOURCE = "personas";
 export const PERSONA_PINS_LAYER = "persona-pins";
 export const CORNER_IMAGE = "corner-handle";
+/** A line or lot being drawn, and its waypoints or point. */
+export const DRAW_LINE_SOURCE = "draw-line";
+export const DRAW_POINTS_SOURCE = "draw-points";
 
 /** Height for a proposal whose type has no height (or isn't in the catalog). */
 export const PLACEHOLDER_HEIGHT_M = 40;
@@ -39,27 +34,32 @@ const isArea: FilterSpecification = [
   ["literal", ["Polygon", "MultiPolygon"]],
 ];
 
-export function buildStyle(t: MapTokens): StyleSpecification {
+/** The map style. `origin` is where the web app serves its tiles from. */
+export function buildStyle(t: MapTokens, origin: string): StyleSpecification {
   return {
     version: 8,
     glyphs: basemapGlyphs,
     light: { anchor: "viewport", color: "#ffffff", intensity: 0.4, position: [1.15, 210, 30] },
     sources: {
       [BASEMAP_SOURCE]: basemapSource,
+      ...citySources(origin),
       [REMOVED_SOURCE]: { type: "geojson", data: empty },
       [SELECTION_SOURCE]: { type: "geojson", data: empty },
       [SELECTION_CORNERS_SOURCE]: { type: "geojson", data: empty },
-      [SELECTION_HIGHLIGHT_SOURCE]: { type: "geojson", data: empty },
       [PROPOSALS_SOURCE]: { type: "geojson", data: empty },
       [IMPACT_SOURCE]: { type: "geojson", data: empty },
       [PERSONAS_SOURCE]: { type: "geojson", data: empty },
+      [DRAW_LINE_SOURCE]: { type: "geojson", data: empty },
+      [DRAW_POINTS_SOURCE]: { type: "geojson", data: empty },
     },
     layers: [
       ...basemapLayers(t),
+      ...groundLayers(t, []),
       {
         id: "selection-fill",
         type: "fill",
         source: SELECTION_SOURCE,
+        filter: isArea,
         paint: { "fill-color": t.accent, "fill-opacity": 0.08 },
       },
       {
@@ -75,16 +75,6 @@ export function buildStyle(t: MapTokens): StyleSpecification {
         paint: { "line-color": t.accent, "line-width": 1.5, "line-dasharray": [2, 2], "line-opacity": 0.7 },
       },
       buildingsLayer(t, []),
-      {
-        // Drawn over the selected building when the basemap can't highlight it alone.
-        id: "selection-highlight",
-        type: "fill-extrusion",
-        source: SELECTION_HIGHLIGHT_SOURCE,
-        paint: {
-          "fill-extrusion-color": t.buildingSelected,
-          "fill-extrusion-height": ["+", ["get", "height"], 0.3],
-        },
-      },
       {
         id: "proposals-area",
         type: "fill-extrusion",
@@ -102,14 +92,24 @@ export function buildStyle(t: MapTokens): StyleSpecification {
         type: "line",
         source: PROPOSALS_SOURCE,
         filter: ["==", ["geometry-type"], "LineString"],
-        paint: { "line-color": t.accent, "line-width": 4 },
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 7],
+        },
       },
       {
         id: "proposals-point",
         type: "circle",
         source: PROPOSALS_SOURCE,
         filter: ["==", ["geometry-type"], "Point"],
-        paint: { "circle-color": t.accent, "circle-radius": 6 },
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": 9,
+          "circle-stroke-color": t.bg,
+          "circle-stroke-width": 2.5,
+          "circle-pitch-alignment": "map",
+        },
       },
       {
         id: "removed-outline",
@@ -121,7 +121,44 @@ export function buildStyle(t: MapTokens): StyleSpecification {
         id: "selection-outline",
         type: "line",
         source: SELECTION_SOURCE,
+        filter: isArea,
         paint: { "line-color": t.accent, "line-width": 1.5, "line-dasharray": [3, 2] },
+      },
+      {
+        // A selected street or cycling segment.
+        id: "selection-line",
+        type: "line",
+        source: SELECTION_SOURCE,
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round" },
+        paint: { "line-color": t.accent, "line-width": 4, "line-opacity": 0.9 },
+      },
+      transitLayer(t),
+      {
+        id: "draw-area",
+        type: "fill",
+        source: DRAW_LINE_SOURCE,
+        filter: isArea,
+        paint: { "fill-color": t.accent, "fill-opacity": 0.18 },
+      },
+      {
+        id: "draw-line",
+        type: "line",
+        source: DRAW_LINE_SOURCE,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": t.accent, "line-width": 4 },
+      },
+      {
+        id: "draw-points",
+        type: "circle",
+        source: DRAW_POINTS_SOURCE,
+        paint: {
+          "circle-color": t.bg,
+          "circle-radius": 6,
+          "circle-stroke-color": t.accent,
+          "circle-stroke-width": 2.5,
+          "circle-pitch-alignment": "map",
+        },
       },
       {
         id: "selection-corners",
@@ -240,7 +277,8 @@ export function impactArea(geometry: Geometry, radiusM: number): FeatureCollecti
  * which is plenty accurate at building scale.
  */
 export function cornerPoints(feature: BaseFeature, bearingDeg: number): FeatureCollection {
-  const [w, s, e, n] = bbox(feature.footprint);
+  if (coordsOf(feature.geometry).length === 0) return empty;
+  const [w, s, e, n] = bbox(feature.geometry);
   const [cx, cy] = [(w + e) / 2, (s + n) / 2];
   const kx = Math.cos((cy * Math.PI) / 180);
   const a = (bearingDeg * Math.PI) / 180;
@@ -252,7 +290,7 @@ export function cornerPoints(feature: BaseFeature, bearingDeg: number): FeatureC
   };
   const fromUV = ([u, v]: number[]) => [cx + (u * cos + v * sin) / kx, cy - u * sin + v * cos];
 
-  const uv = coordsOf(feature.footprint).map(toUV);
+  const uv = coordsOf(feature.geometry).map(toUV);
   const us = uv.map(([u]) => u);
   const vs = uv.map(([, v]) => v);
   const [u0, u1, v0, v1] = [Math.min(...us), Math.max(...us), Math.min(...vs), Math.max(...vs)];
@@ -266,8 +304,10 @@ export function cornerPoints(feature: BaseFeature, bearingDeg: number): FeatureC
   );
 }
 
-function coordsOf(footprint: BaseFeature["footprint"]): number[][] {
-  return footprint.type === "Polygon" ? footprint.coordinates.flat() : footprint.coordinates.flat(2);
+function coordsOf(geometry: Geometry): number[][] {
+  if (geometry.type === "Polygon") return geometry.coordinates.flat();
+  if (geometry.type === "MultiPolygon") return geometry.coordinates.flat(2);
+  return [];
 }
 
 /** A small square handle, drawn once so no sprite sheet is needed. */

@@ -1,27 +1,52 @@
-import type { Geometry, MultiPolygon, Polygon } from "geojson";
+import type { Geometry } from "geojson";
 
 export type { Geometry };
 
 /** Stable Ward feature id, e.g. "building:79697012". */
 export type Fid = string;
 
-/** A base-map feature as the rest of the app sees it (no basemap ids). */
+/** Every kind of map feature, from its fid prefix ("park:123"); "drawn" is a shape the user drew. */
+export type FeatureKind = "building" | "parcel" | "park" | "transit" | "cycling" | "street" | "drawn";
+
+/** Kinds a proposal can go on; existing lines and points are shown for information. */
+export const REPLACEABLE: readonly FeatureKind[] = ["building", "parcel", "park", "drawn"];
+
+/** A map feature as the rest of the app sees it. */
 export type BaseFeature = {
   fid: Fid;
+  kind: FeatureKind;
   name: string | null;
   use: string | null;
   heightM: number | null;
-  footprint: Polygon | MultiPolygon;
-  /** From our database; absent outside the loaded area. */
+  geometry: Geometry;
+  /** From our database (the tiles carry only a few properties). */
   details?: FeatureDetails;
+  /** A drawn shape: the buildings the user agreed to remove for it, and its checks. */
+  drawn?: DrawnSite;
+};
+
+export type DrawnSite = {
+  replaces: Fid[];
+  areaM2: number | null;
+  lengthM: number | null;
+  /** Streets a routed line follows. */
+  streets: string[];
+  warnings: string[];
 };
 
 export type FeatureDetails = {
   address: string | null;
+  /** A building's lot, or a parcel's or park's own area. */
   lotAreaM2: number | null;
   /** Null where Zoning By-law 569-2013 does not apply. */
   zoning: Zoning | null;
   nearestStops: TransitStop[];
+  mode: string | null;
+  routes: string[];
+  roadClass: string | null;
+  facilityType: string | null;
+  installed: number | null;
+  lengthM: number | null;
 };
 
 export type Zoning = {
@@ -38,8 +63,8 @@ export type TransitStop = {
   distanceM: number;
 };
 
-/** Where a selection is in being matched to our data. */
-export type SelectionStatus = "loading" | "ready" | "outside-area" | "not-found" | "error";
+/** Where a selection is in loading its details. */
+export type SelectionStatus = "loading" | "ready" | "not-found" | "error";
 
 /**
  * A proposed change. Plain data so a parsed prompt can create one later.
@@ -58,6 +83,9 @@ export type Proposal = {
   /** Bottom to top; a flat part (park) sits on the roof when there are several. */
   parts: Part[];
   geometry: Geometry;
+  /** The selected or drawn site it was built on. */
+  siteFid: Fid;
+  /** Base features it removes (the site itself, or buildings under a drawn shape). */
   replaces: Fid[];
   /** What the user typed, when it came from the prompt bar. */
   prompt: string | null;
@@ -82,6 +110,18 @@ export type CatalogType = {
   impactRadiusM: number;
   /** Metres per storey, for types with a height. */
   storeyM: number | null;
+  draw: DrawRules;
+};
+
+export type DrawTool = "lot" | "rectangle" | "polygon" | "freehand" | "route" | "point";
+
+export type DrawRules = {
+  tools: DrawTool[];
+  minAreaM2: number | null;
+  maxAreaM2: number | null;
+  minLengthM: number | null;
+  maxLengthM: number | null;
+  snap: "vertices" | "street" | "none";
 };
 
 export type CatalogParam = {

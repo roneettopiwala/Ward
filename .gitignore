@@ -30,3 +30,6 @@ CLAUDE.md
 
 # Pipeline raw downloads
 pipeline/.cache/
+
+# Built map tiles (python -m ward_pipeline.tiles)
+web/public/tiles/

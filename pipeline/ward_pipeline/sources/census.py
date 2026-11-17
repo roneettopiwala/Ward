@@ -7,6 +7,8 @@ values from the Census Profile SDMX API. Only area-level aggregates are kept.
 import io
 import json
 import logging
+import time
+from typing import Any
 
 import geopandas as gpd
 import httpx
@@ -25,6 +27,7 @@ DA_LAYER = (
 )
 PROFILE = "https://api.statcan.gc.ca/census-recensement/profile/sdmx/rest/data/STC_CP,DF_DA"
 BATCH = 25
+RETRIES = 4
 
 # Census Profile characteristic ids (2021). Groups map our labels to ids.
 POPULATION, MEDIAN_AGE, AVG_HOUSEHOLD = 1, 40, 56
@@ -120,7 +123,7 @@ def _boundaries(area: Area) -> gpd.GeoDataFrame:
     features, offset = [], 0
     while True:
         page = (
-            httpx.get(
+            _get(
                 DA_LAYER,
                 timeout=120,
                 params={
@@ -156,7 +159,7 @@ def _profile(dguids: list[str]) -> dict[str, dict[int, float]]:
     chars = "+".join(map(str, ALL_IDS))
     for i in range(0, len(dguids), BATCH):
         key = f"A5.{'+'.join(dguids[i : i + BATCH])}.1.{chars}.1"
-        r = httpx.get(
+        r = _get(
             f"{PROFILE}/{key}", timeout=120, headers={"Accept": "application/vnd.sdmx.data+csv"}
         )
         if r.text.startswith("NoRecordsFound"):
@@ -168,6 +171,21 @@ def _profile(dguids: list[str]) -> dict[str, dict[int, float]]:
         for row in df.dropna(subset=["OBS_VALUE"]).itertuples():
             out.setdefault(row.REF_AREA, {})[int(row.CHARACTERISTIC)] = float(row.OBS_VALUE)
     return out
+
+
+def _get(url: str, **kwargs: Any) -> httpx.Response:
+    """GET with a few retries: StatCan's services time out now and then."""
+    for attempt in range(1, RETRIES + 1):
+        try:
+            r = httpx.get(url, **kwargs)
+            if r.status_code < 500 or attempt == RETRIES:
+                return r
+        except httpx.TransportError:
+            if attempt == RETRIES:
+                raise
+        log.warning("statcan request failed (try %d of %d); retrying", attempt, RETRIES)
+        time.sleep(15 * attempt)
+    raise AssertionError("unreachable")
 
 
 def _aggregate(v: dict[int, float]) -> dict:

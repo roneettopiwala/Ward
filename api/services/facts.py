@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from services import areas
 from services.catalog import Part, Stack
 
 NEIGHBOUR_RADIUS_M = 250
@@ -160,13 +161,27 @@ async def replaced(ctx: Context) -> None:
         FROM buildings WHERE fid = ANY(:replaces)
         """
     )
+    # A park or an empty lot can be replaced too.
+    others = await ctx.rows(
+        """
+        SELECT coalesce(name, 'a park') AS name FROM parks WHERE fid = ANY(:replaces)
+        UNION ALL
+        SELECT coalesce('the lot at ' || address, 'an empty lot') FROM parcels
+        WHERE fid = ANY(:replaces)
+        """
+    )
     if not rows:
-        if not ctx.proposal.replaces:
+        if others:
+            names = ", ".join(r.name for r in others)
+            ctx.add("replaced.name", "Replaces", names, SOURCE_PROPOSAL)
+        elif not ctx.proposal.replaces:
             ctx.add("replaced.none", "Replaces", "nothing (empty site)", SOURCE_PROPOSAL)
         return
-    ctx.add(
-        "replaced.name", "Replaces", ", ".join(r.name or "a building" for r in rows), SOURCE_MASSING
-    )
+    names = [r.name or "a building" for r in rows] + [r.name for r in others]
+    # A place spanning several footprints is named once; generated names can repeat.
+    named = list(dict.fromkeys(n for n in names if "-storey" not in n and n != "a building"))
+    unnamed = [n for n in names if "-storey" in n or n == "a building"]
+    ctx.add("replaced.name", "Replaces", ", ".join(named + unnamed), SOURCE_MASSING)
     uses = sorted({r.use for r in rows if r.use})
     if uses:
         ctx.add("replaced.use", "Current use", ", ".join(uses), SOURCE_OSM)
@@ -192,9 +207,25 @@ async def site(ctx: Context) -> None:
         """
     )
     ctx.values["site_area"] = r.area
-    ctx.add("site.area_m2", "Site area", r.area, SOURCE_PROPOSAL, "m²")
+    if r.area > 0:  # lines and points have no area
+        ctx.add("site.area_m2", "Site area", r.area, SOURCE_PROPOSAL, "m²")
     if r.hood:
         ctx.add("site.neighbourhood", "Neighbourhood", r.hood, SOURCE_PROPOSAL)
+    area = await areas.resolve(ctx.conn, ctx.proposal.geometry, ctx.radius)
+    if len(area.neighbourhoods) > 1:
+        ctx.add(
+            "site.neighbourhoods",
+            f"Neighbourhoods within {ctx.radius:g} m",
+            [n.name for n in area.neighbourhoods],
+            SOURCE_PROPOSAL,
+        )
+    if area.missing:
+        ctx.add(
+            "site.missing_data",
+            f"Neighbourhoods within {ctx.radius:g} m without city data yet",
+            area.missing,
+            SOURCE_PROPOSAL,
+        )
     stack = ctx.stack
     if stack.mixed or any(p.tags for p, _ in stack.parts):
         ctx.add("proposal.parts", "Proposed uses, bottom to top", stack.label, SOURCE_PROPOSAL)
@@ -366,7 +397,8 @@ async def parks(ctx: Context) -> None:
         ctx.add("parks.nearest_m", "Distance to nearest park", nearest.d, SOURCE_PARKS, "m")
     if ctx.stack.site_park:
         added = ctx.values["site_area"]
-        ctx.add("proposal.park_area_m2", "New park area", added, SOURCE_PROPOSAL, "m²")
+        kind = ctx.stack.main[1].label.lower()
+        ctx.add("proposal.park_area_m2", f"New {kind} area", added, SOURCE_PROPOSAL, "m²")
         if r.area:
             ctx.add(
                 "parks.area_increase_pct",
@@ -436,7 +468,9 @@ async def population(ctx: Context) -> None:
                sum(people * avg_household) / NULLIF(sum(people), 0) AS household,
                (SELECT ST_Area(ST_Intersection(site.ring, ST_Union(n.geom))::geography)
                        / ST_Area(site.ring::geography)
-                FROM neighbourhoods n, site GROUP BY site.ring) AS coverage
+                FROM neighbourhoods n, site
+                WHERE EXISTS (SELECT 1 FROM census_areas c WHERE c.neighbourhood_id = n.id)
+                GROUP BY site.ring) AS coverage
         FROM w
         """
     )
@@ -579,6 +613,257 @@ def _station(name: str) -> str:
     return name.split(" - ")[0]
 
 
+# ---------------------------------------------------------------- bike lanes
+
+# A street or cycling facility within this distance of the route runs along it.
+ALONG_M = 12
+ARTERIALS = ["major_arterial", "minor_arterial", "arterial_ramp"]
+
+
+async def bike_route(ctx: Context) -> None:
+    """The streets the route uses, how much is on arterials, and shared streetcar streets."""
+    r = await ctx.row("SELECT ST_Length(site.g::geography) AS length FROM site")
+    ctx.values["route_length"] = r.length
+    ctx.add("bike.length_m", "Route length", r.length, SOURCE_PROPOSAL, "m")
+    # Segments mostly covered by the route are the ones it runs along (not cross streets).
+    rows = await ctx.rows(
+        """
+        , along AS (
+            SELECT s.name, s.road_class, ST_Length(s.geom::geography) AS m
+            FROM streets s, site
+            WHERE ST_DWithin(s.geom::geography, site.g::geography, :along)
+              AND ST_Length(ST_Intersection(
+                    s.geom, ST_Buffer(site.g::geography, :along)::geometry)::geography)
+                  >= 0.8 * ST_Length(s.geom::geography)
+        )
+        SELECT name, road_class, sum(m) AS m FROM along GROUP BY name, road_class
+        ORDER BY m DESC
+        """,
+        along=ALONG_M,
+    )
+    total = sum(x.m for x in rows) or 1
+    names = list(dict.fromkeys(x.name for x in rows if x.name))
+    if names:
+        ctx.add("bike.streets", "Streets along the route", names[:6], SOURCE_PROPOSAL)
+    arterial = sum(x.m for x in rows if x.road_class in ARTERIALS) / total * 100
+    ctx.add(
+        "bike.arterial_pct",
+        "Share of the route on arterial roads (where lanes would come from traffic or parking)",
+        arterial,
+        SOURCE_PROPOSAL,
+        "%",
+        display=f"{arterial:.0f}%",
+    )
+    streetcar = await ctx.row(
+        """
+        SELECT array(
+            SELECT DISTINCT unnest(t.routes) FROM transit_stops t
+            WHERE t.mode = 'streetcar' AND ST_DWithin(t.geom::geography, site.g::geography, 20)
+            ORDER BY 1
+        ) AS routes
+        FROM site
+        """
+    )
+    if streetcar and streetcar.routes:
+        ctx.add(
+            "bike.streetcar_routes",
+            "Streetcar routes on the same streets (tracks and stops to design around)",
+            streetcar.routes,
+            SOURCE_TTC,
+        )
+
+
+async def cycling_network(ctx: Context) -> None:
+    """How the route fits the existing cycling network."""
+    r = await ctx.row(
+        """
+        , existing AS (SELECT * FROM cycling c, site
+                       WHERE ST_DWithin(c.geom::geography, site.g::geography, :radius))
+        SELECT
+            (SELECT ST_Length(ST_Intersection(
+                        site.g, ST_Buffer(ST_Union(e.geom)::geography, :along)::geometry
+                    )::geography)
+             FROM existing e WHERE ST_DWithin(e.geom::geography, site.g::geography, :along))
+                AS covered_m,
+            (SELECT array_agg(DISTINCT e.facility_type) FROM existing e
+             WHERE ST_DWithin(e.geom::geography, site.g::geography, :along)) AS covered_types,
+            (SELECT sum(ST_Length(ST_Intersection(e.geom, site.ring)::geography))
+             FROM existing e) AS network_m
+        FROM site
+        """,
+        along=ALONG_M,
+    )
+    length = ctx.values.get("route_length") or 1
+    covered = min(100.0, (r.covered_m or 0) / length * 100)
+    ctx.add(
+        "cycling.existing_pct",
+        "Share of the route that already has a bike facility",
+        covered,
+        "City cycling network",
+        "%",
+        display=f"{covered:.0f}%"
+        + (f" ({', '.join(sorted(r.covered_types))})" if covered >= 1 and r.covered_types else ""),
+    )
+    ctx.add(
+        "cycling.network_m",
+        f"Existing cycling network within {ctx.radius:g} m",
+        r.network_m or 0,
+        "City cycling network",
+        "m",
+    )
+    # Routes it meets: existing facilities touching the line that don't run along it.
+    meets = await ctx.rows(
+        """
+        SELECT DISTINCT c.name FROM cycling c, site
+        WHERE c.name IS NOT NULL
+          AND ST_DWithin(c.geom::geography, site.g::geography, :near)
+          AND ST_Length(ST_Intersection(
+                c.geom, ST_Buffer(site.g::geography, :along)::geometry)::geography)
+              < 0.5 * ST_Length(c.geom::geography)
+        """,
+        near=25,
+        along=ALONG_M,
+    )
+    names = sorted({m.name for m in meets})
+    ctx.add(
+        "cycling.connects_to",
+        "Existing cycling routes it meets",
+        names[:8] if names else [],
+        "City cycling network",
+    )
+
+
+async def bike_commuters(ctx: Context) -> None:
+    """How many people near the route already cycle, or take transit, to work."""
+    r = await ctx.row(
+        """
+        , w AS (
+            SELECT c.commute_dist,
+                   c.population * ST_Area(ST_Intersection(c.geom, site.ring)::geography)
+                       / NULLIF(ST_Area(c.geom::geography), 0) AS people
+            FROM census_areas c, site
+            WHERE ST_Intersects(c.geom, site.ring) AND c.commute_dist IS NOT NULL
+        )
+        SELECT sum(people * (commute_dist->>'bike')::float) / NULLIF(sum(people), 0) AS bike,
+               sum(people * (commute_dist->>'car')::float) / NULLIF(sum(people), 0) AS car
+        FROM w
+        """
+    )
+    if r is None or r.bike is None:
+        return
+    within = f"within {ctx.radius:g} m"
+    ctx.add(
+        "commute.bike_pct",
+        f"Commuters who cycle to work, {within}",
+        r.bike * 100,
+        SOURCE_CENSUS,
+        "%",
+        display=f"{r.bike * 100:.1f}%",
+    )
+    ctx.add(
+        "commute.car_pct",
+        f"Commuters who drive to work, {within}",
+        r.car * 100,
+        SOURCE_CENSUS,
+        "%",
+        display=f"{r.car * 100:.0f}%",
+    )
+
+
+# ---------------------------------------------------------------- stations
+
+RAPID = ["subway", "lrt"]
+WALK_M = 800
+TRANSFER_M = 300
+
+
+async def station_access(ctx: Context) -> None:
+    """What a new station adds: rapid transit for people beyond walking distance today."""
+    nearest = await ctx.row(
+        """
+        SELECT s.name, s.mode, ST_Distance(s.geom::geography, site.g::geography) AS d
+        FROM transit_stops s, site WHERE s.mode = ANY(:rapid)
+        ORDER BY s.geom <-> site.g LIMIT 1
+        """,
+        rapid=RAPID,
+    )
+    if nearest:
+        ctx.add(
+            "station.nearest_rapid_name",
+            "Nearest existing subway or LRT station",
+            _station(nearest.name),
+            SOURCE_TTC,
+        )
+        ctx.add(
+            "station.nearest_rapid_m",
+            "Distance to nearest existing subway or LRT station",
+            nearest.d,
+            SOURCE_TTC,
+            "m",
+        )
+    r = await ctx.row(
+        """
+        , w AS (
+            SELECT c.population * ST_Area(ST_Intersection(c.geom, site.ring)::geography)
+                        / NULLIF(ST_Area(c.geom::geography), 0) AS people,
+                   (SELECT ST_Distance(s.geom::geography, ST_PointOnSurface(c.geom)::geography)
+                    FROM transit_stops s WHERE s.mode = ANY(:rapid)
+                    ORDER BY s.geom <-> ST_PointOnSurface(c.geom) LIMIT 1) AS to_rapid
+            FROM census_areas c, site WHERE ST_Intersects(c.geom, site.ring)
+        )
+        SELECT sum(people) FILTER (WHERE to_rapid IS NULL OR to_rapid > :walk) AS gaining
+        FROM w
+        """,
+        rapid=RAPID,
+        walk=WALK_M,
+    )
+    ctx.add(
+        "station.residents_gaining",
+        f"Residents within {ctx.radius:g} m who are more than {WALK_M} m from a subway "
+        "or LRT station today",
+        round(r.gaining or 0, -1),
+        f"{SOURCE_CENSUS} + {SOURCE_TTC}",
+        "residents",
+    )
+    transfers = await ctx.row(
+        """
+        SELECT array(
+            SELECT DISTINCT unnest(s.routes) FROM transit_stops s
+            WHERE s.mode IN ('bus', 'streetcar')
+              AND ST_DWithin(s.geom::geography, site.g::geography, :transfer)
+            ORDER BY 1
+        ) AS routes
+        FROM site
+        """,
+        transfer=TRANSFER_M,
+    )
+    ctx.add(
+        "station.transfer_routes",
+        f"Bus and streetcar routes within {TRANSFER_M} m (connections)",
+        transfers.routes if transfers else [],
+        SOURCE_TTC,
+    )
+
+
+# ---------------------------------------------------------------- gardens
+
+
+async def garden(ctx: Context) -> None:
+    plots = next((p.params.get("plots") for p, _ in ctx.stack.parts if "plots" in p.params), None)
+    if not plots:
+        return
+    ctx.add("garden.plots", "Garden plots", plots, SOURCE_PROPOSAL, "plots")
+    people = ctx.values.get("population")
+    if people:
+        ctx.add(
+            "garden.residents_per_plot",
+            f"Residents within {ctx.radius:g} m per garden plot",
+            people / plots,
+            f"{SOURCE_PROPOSAL} + {SOURCE_CENSUS}",
+            "residents",
+        )
+
+
 METRICS: dict[str, Callable[[Context], Awaitable[None]]] = {
     "replaced": replaced,
     "site": site,
@@ -593,7 +878,25 @@ METRICS: dict[str, Callable[[Context], Awaitable[None]]] = {
     "homes_added": homes_added,
     "floor_area": floor_area,
     "green_space_per_resident": green_space_per_resident,
+    "bike_route": bike_route,
+    "cycling_network": cycling_network,
+    "bike_commuters": bike_commuters,
+    "station_access": station_access,
+    "garden": garden,
 }
+
+
+def _site_name(ctx: Context) -> str | None:
+    """What the results call the site: what it replaces, shortened for a big drawn site."""
+    fact = next((f for f in ctx.facts if f.id == "replaced.name"), None)
+    if fact is None or not isinstance(fact.value, str):
+        return None
+    names = fact.value.split(", ")
+    if len(names) <= 2:
+        return fact.value
+    # Generated names ("1-storey building") say less than real ones.
+    named = [n for n in names if "-storey" not in n and n != "a building"] or names
+    return f"{named[0]} and {len(names) - 1} more"
 
 
 async def build_fact_sheet(conn: AsyncConnection, proposal: ProposalInput) -> FactSheet:
@@ -608,7 +911,9 @@ async def build_fact_sheet(conn: AsyncConnection, proposal: ProposalInput) -> Fa
     for name in needed:
         await METRICS[name](ctx)
     names = {f.id: f.display for f in ctx.facts}
-    site_name = names.get("replaced.name") or names.get("site.neighbourhood") or "Selected site"
+    streets = next((f.value for f in ctx.facts if f.id == "bike.streets"), None)
+    along = f"Along {streets[0]}" if isinstance(streets, list) and streets else None
+    site_name = _site_name(ctx) or along or names.get("site.neighbourhood") or "Selected site"
     main, main_type = stack.main
     return FactSheet(
         type=main_type.type,

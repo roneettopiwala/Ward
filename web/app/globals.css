@@ -30,9 +30,12 @@
   --color-map-water: #07111a;
   --color-map-park: #172a20;
   --color-map-label: #6b6f77;
+  --color-map-cycling: #2f8f78;
+  --color-map-transit: #9aa0a8;
   --color-map-removed: #8a8d95;
   --color-map-proposal-park: #4e6b2a;
   --color-map-proposal-retail: #8fae2c;
+  --color-map-proposal-garden: #7a9a3a;
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
