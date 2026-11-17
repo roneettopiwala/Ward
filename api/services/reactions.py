@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from services import llm, voices
+from services import llm, retrieval, voices
 from services.facts import FactSheet
 from services.impact import PersonalImpact
 from services.personas import Persona
@@ -51,6 +51,8 @@ class PersonaReaction(BaseModel):
     reaction: Reaction
     model: str
     latency_ms: int
+    references: list[str] = []
+    """Ids of the residents' comments the persona was shown."""
 
 
 def stance_label(stance: float) -> str:
@@ -80,8 +82,18 @@ def _profile(p: Persona) -> dict:
     }
 
 
-def _problems(r: Reaction, allowed_text: str, voice: dict | None = None) -> list[str]:
+def _problems(
+    r: Reaction,
+    allowed_text: str,
+    voice: dict | None = None,
+    references: list[retrieval.Reference] | None = None,
+) -> list[str]:
     found = []
+    if run := retrieval.copied(r.quote, references or []):
+        found.append(
+            f'the quote repeats "{run}" from what_neighbours_have_said; say it in your own '
+            "words, from your own situation"
+        )
     sentences = len(SENTENCE_END.findall(r.quote.strip())) or 1
     if sentences > voices.max_sentences(voice):
         found.append(
@@ -102,7 +114,13 @@ def _problems(r: Reaction, allowed_text: str, voice: dict | None = None) -> list
     return found
 
 
-async def react(p: Persona, impact: PersonalImpact, sheet: FactSheet) -> PersonaReaction:
+async def react(
+    p: Persona,
+    impact: PersonalImpact,
+    sheet: FactSheet,
+    references: list[retrieval.Reference] | None = None,
+) -> PersonaReaction:
+    references = references or []
     payload = {
         "you": _profile(p),
         "proposal": {
@@ -114,13 +132,19 @@ async def react(p: Persona, impact: PersonalImpact, sheet: FactSheet) -> Persona
         "how_it_affects_you": impact.bullets,
         "facts": [f"{f.label}: {f.display}" for f in sheet.facts],
     }
+    # Numbers in neighbours' comments are about other sites, so they aren't allowed.
+    allowed = json.dumps(payload, ensure_ascii=False)
+    if references:
+        payload["what_neighbours_have_said"] = [
+            {"comment": r.text, "from": r.where, "feeling": r.stance} for r in references
+        ]
     user = json.dumps(payload, ensure_ascii=False, indent=1)
     started = time.monotonic()
     reaction, model = await llm.complete_json(
         system=llm.prompt("persona_react"),
         user=user,
         schema=Reaction,
-        check=lambda r: _problems(r, user, p.traits.get("voice")),
+        check=lambda r: _problems(r, allowed, p.traits.get("voice"), references),
         model=get_settings().reaction_model,
         max_tokens=1000,
     )
@@ -129,11 +153,15 @@ async def react(p: Persona, impact: PersonalImpact, sheet: FactSheet) -> Persona
         reaction=reaction,
         model=model,
         latency_ms=round((time.monotonic() - started) * 1000),
+        references=[r.id for r in references],
     )
 
 
 async def react_all(
-    personas: list[Persona], impacts: dict, sheet: FactSheet
+    personas: list[Persona],
+    impacts: dict,
+    sheet: FactSheet,
+    references: dict | None = None,
 ) -> AsyncIterator[tuple[Persona, PersonaReaction | None]]:
     """Reactions in the order they finish; None for a persona whose replies failed twice."""
     gate = asyncio.Semaphore(PARALLEL)
@@ -141,7 +169,7 @@ async def react_all(
     async def one(p: Persona) -> tuple[Persona, PersonaReaction | None]:
         async with gate:
             try:
-                return p, await react(p, impacts[p.id], sheet)
+                return p, await react(p, impacts[p.id], sheet, (references or {}).get(p.id))
             except llm.LLMError:
                 log.warning("persona %s (%s) gave no valid reaction", p.name, p.id)
                 return p, None

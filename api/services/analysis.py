@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from services import areas, impact, llm, personas, proposals, reactions
+from services import areas, impact, llm, personas, proposals, reactions, retrieval
 from services.catalog import Stack
 from services.facts import FactSheet, ProposalInput, build_fact_sheet
 from services.pros_cons import ProsConsResult, generate
@@ -161,10 +161,11 @@ async def _personas(
         impacts = await impact.compute(
             conn, chosen, proposal.geometry, proposal.replaces, stack.impact_radius_m
         )
+        references = await retrieval.for_personas(conn, chosen, sheet)
         await proposals.clear_reactions(conn, proposal_id)
         await emit(AnalysisEvent(event="personas", data={"total": len(chosen)}))
         done: list[reactions.Reaction] = []
-        async for p, r in reactions.react_all(chosen, impacts, sheet):
+        async for p, r in reactions.react_all(chosen, impacts, sheet, references):
             if r is None:
                 continue
             card = reactions.card(p, impacts[p.id], r)
@@ -180,6 +181,7 @@ async def _personas(
                     "output": r.reaction.model_dump(),
                     "impact": impacts[p.id].model_dump(mode="json"),
                     "card": card,
+                    "references": r.references,
                 },
                 r.latency_ms,
             )

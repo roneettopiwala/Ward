@@ -207,7 +207,12 @@ CREATE TABLE comments (
   report_date         DATE,
   text                TEXT NOT NULL,
   neighbourhood_id    INT REFERENCES neighbourhoods(id),
-  geom                GEOMETRY(Point, 4326)
+  geom                GEOMETRY(Point, 4326),
+  embedding           vector(384),            -- bge-small-en-v1.5, for retrieval
+  embedding_model     TEXT,                   -- which model made the vector
+  themes              TEXT[],                 -- same theme names as persona reactions
+  stance              TEXT,                   -- concern, support, mixed
+  tagged_by           TEXT                    -- which model wrote themes and stance
 );
 
 -- =========================================================
@@ -216,7 +221,7 @@ CREATE TABLE comments (
 
 CREATE TABLE eval_runs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  application_id  TEXT REFERENCES applications(id),
+  application_number  TEXT REFERENCES applications(application_number),
   proposal_id     UUID REFERENCES proposals(id),   -- the replayed proposal
   config          JSONB,                            -- models, persona count, prompt version
   created_at      TIMESTAMPTZ DEFAULT now()
@@ -246,9 +251,12 @@ CREATE INDEX ON transit_stops         USING GIST (geom);
 CREATE INDEX ON pois                  USING GIST (geom);
 CREATE INDEX ON personas              USING GIST (home);
 CREATE INDEX ON proposals             USING GIST (geom);
-CREATE INDEX ON consultation_comments USING GIST (geom);
+CREATE INDEX ON applications          USING GIST (geom);
+CREATE INDEX ON comments              USING GIST (geom);
 
 CREATE INDEX ON personas (neighbourhood_id);
 CREATE INDEX ON persona_reactions (proposal_id);
-CREATE INDEX ON consultation_comments (neighbourhood_id);
-CREATE INDEX ON consultation_comments USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX ON applications (neighbourhood_id);
+CREATE INDEX ON comments (neighbourhood_id);
+CREATE INDEX ON comments (application_number);
+CREATE INDEX ON comments USING hnsw (embedding vector_cosine_ops);
