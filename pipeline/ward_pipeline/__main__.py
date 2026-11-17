@@ -4,6 +4,8 @@ python -m ward_pipeline --area 165[,164,...]   one or more neighbourhoods
 python -m ward_pipeline --area all             the whole city, one neighbourhood at a
                                                time; resumes where a previous run stopped
 python -m ward_pipeline --only streets,cycling  just these citywide sources
+python -m ward_pipeline --only applications,consultation  development applications and
+                                               residents' comments from staff reports
 python -m ward_pipeline --area 165 --only census  reload census for an area
 """
 
@@ -19,8 +21,10 @@ from .area import all_ids, load_area
 from .db import engine
 from .sources import (
     addresses,
+    applications,
     buildings,
     census,
+    consultation,
     cycling,
     neighbourhoods,
     osm,
@@ -33,7 +37,13 @@ from .sources import (
 
 log = logging.getLogger("ward_pipeline")
 
-CITYWIDE = {"streets": streets.ingest, "cycling": cycling.ingest}
+CITYWIDE = {
+    "streets": streets.ingest,
+    "cycling": cycling.ingest,
+    # Comments are located at their applications, so applications go first.
+    "applications": applications.ingest,
+    "consultation": consultation.ingest,
+}
 ONLY = ["census", *CITYWIDE]
 # After a neighbourhood fails, wait this long before the next one.
 FAILURE_PAUSE_S = 60
@@ -63,7 +73,8 @@ def main() -> None:
     eng = engine()
     migrate.migrate(eng)
 
-    citywide = [s for s in only if s in CITYWIDE] or (list(CITYWIDE) if args.area == "all" else [])
+    wanted = set(only) or (set(CITYWIDE) if args.area == "all" else set())
+    citywide = [s for s in CITYWIDE if s in wanted]
     for name in citywide:
         log.info("%s: %d rows", name, CITYWIDE[name](eng))
 
