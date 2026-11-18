@@ -1,0 +1,105 @@
+# Persona interests: things people do, drawn in code from real participation rates
+# and tied to real places. Every rate cites its source; `approximate: true` marks
+# rates derived from polls or older surveys rather than read off a current table.
+#
+# Each persona draws every interest independently (rate x their age factor), then
+# keeps the rarest three. The LLM never decides who is a fan or a golfer.
+#
+# place.fid:   a named venue (fans travel to it from anywhere in the city)
+# place.kinds: OSM categories; the persona's nearest one is used
+
+age_factors:
+  # Sport participation by age relative to all adults: 27% of adults, 32% of
+  # 18-64 year olds and 13% of those 65+ played sport in the past year (2024).
+  sport:
+    under_65: 1.19   # 32 / 27
+    65_plus: 0.48    # 13 / 27
+    source: "CFLRI with Leger, 2024 Physical Activity and Sport Survey: https://cflri.ca/publication/sport-participation-by-age/"
+
+interests:
+  # ---- following a team (approximate)
+  # About 60% of Canadians follow sports (four in ten do not). Of Toronto sports
+  # fans, 49% follow the Blue Jays and 43% the Leafs closely or fairly closely.
+  - id: blue_jays
+    label: follows the Blue Jays and goes to games
+    relation: watches Blue Jays games at
+    rate: 0.29        # 0.60 x 0.49
+    approximate: true
+    source: "Bibby, Project Canada sports survey 2016 (https://globalnews.ca/news/2626964/toronto-loves-the-blue-jays-but-other-canadians-just-arent-that-into-them); Narrative Research (https://narrativeresearch.ca/?p=4306)"
+    place: {fid: "poi:w7969701"}     # Rogers Centre
+
+  - id: maple_leafs
+    label: follows the Maple Leafs and goes to games
+    relation: watches Leafs games at
+    rate: 0.26        # 0.60 x 0.43
+    approximate: true
+    source: "Bibby, Project Canada sports survey 2016 (https://globalnews.ca/news/2626964/toronto-loves-the-blue-jays-but-other-canadians-just-arent-that-into-them); Narrative Research (https://narrativeresearch.ca/?p=4306)"
+    place: {fid: "poi:w19882585"}    # Scotiabank Arena
+
+  # ---- playing sport (approximate: 2005 counts of adult players, over about
+  # 26.1 million Canadians 15+, i.e. 7.3 million sport participants at 28%)
+  - id: golf
+    label: golfs
+    relation: golfs at
+    rate: 0.057       # 1.5 million golfers
+    age_factor: sport
+    approximate: true
+    source: "Statistics Canada, Sport Participation in Canada 2005 (GSS): https://www150.statcan.gc.ca/n1/pub/81-595-m/2008060/s5-eng.htm"
+    place: {kinds: [golf_course]}
+
+  - id: hockey
+    label: plays hockey
+    relation: plays hockey at
+    rate: 0.050       # 1.3 million players
+    age_factor: sport
+    approximate: true
+    source: "Statistics Canada, Sport Participation in Canada 2005 (GSS): https://www150.statcan.gc.ca/n1/pub/81-595-m/2008060/s5-eng.htm"
+    place: {kinds: [ice_rink]}
+
+  - id: soccer
+    label: plays soccer
+    relation: plays soccer at
+    rate: 0.025       # 500,000 to 800,000 players; midpoint
+    age_factor: sport
+    approximate: true
+    source: "Statistics Canada, Sport Participation in Canada 2005 (GSS): https://www150.statcan.gc.ca/n1/pub/81-595-m/2008060/s5-eng.htm"
+    place: {kinds: [pitch]}
+
+  - id: swimming
+    label: swims laps
+    relation: swims at
+    rate: 0.025       # 500,000 to 800,000 swimmers; midpoint
+    age_factor: sport
+    approximate: true
+    source: "Statistics Canada, Sport Participation in Canada 2005 (GSS): https://www150.statcan.gc.ca/n1/pub/81-595-m/2008060/s5-eng.htm"
+    place: {kinds: [swimming_pool]}
+
+  # ---- arts and heritage (share of Canadians 15+ who went in the past 12 months)
+  - id: theatre
+    label: goes to live theatre and comedy
+    relation: sees shows at
+    rate: 0.40
+    source: "Hill Strategies, Canadians' Arts, Culture and Heritage Participation in 2016 (GSS): https://hillstrategies.com/resource/canadians-arts-culture-and-heritage-participation-in-2016/"
+    place: {kinds: [theatre]}
+
+  - id: galleries
+    label: visits art galleries
+    relation: visits exhibitions at
+    rate: 0.39
+    source: "Hill Strategies, Canadians' Arts, Culture and Heritage Participation in 2016 (GSS): https://hillstrategies.com/resource/canadians-arts-culture-and-heritage-participation-in-2016/"
+    place: {kinds: [gallery]}
+
+  - id: museums
+    label: visits museums
+    relation: visits
+    rate: 0.35
+    source: "Hill Strategies, Canadians' Arts, Culture and Heritage Participation in 2016 (GSS): https://hillstrategies.com/resource/canadians-arts-culture-and-heritage-participation-in-2016/"
+    place: {kinds: [museum]}
+
+  # ---- libraries (Torontonians who used the library in the past year)
+  - id: library
+    label: uses the public library
+    relation: borrows books at
+    rate: 0.81
+    source: "Toronto Public Library, 2026 budget (resident survey): https://www.toronto.ca/wp-content/uploads/2026/03/965d-2026-Public-Book-TPL-V1.pdf"
+    place: {kinds: [library]}

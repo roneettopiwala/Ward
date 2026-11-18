@@ -75,6 +75,7 @@ def _profile(p: Persona) -> dict:
         "home": p.traits.get("housing"),
         "commute": p.commute_mode,
         "values": p.values,
+        "interests": [i["label"] for i in p.traits.get("interests", [])],
         "quirks": p.traits.get("quirks", []),
         "openness_to_change": p.traits.get("openness"),
         "trust_in_government": p.traits.get("trust_in_government"),

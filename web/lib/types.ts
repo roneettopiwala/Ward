@@ -164,7 +164,7 @@ export type PersonaCard = {
     id: string;
     name: string;
     age: number;
-    role: "resident" | "worker" | "visitor";
+    role: "resident" | "worker" | "visitor" | "citywide";
     occupation: string;
     tagline: string;
     basedOn: string | null;

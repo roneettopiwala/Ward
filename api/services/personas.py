@@ -18,13 +18,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from services import llm, voices
+from services import interests, llm, voices
 from settings import get_settings
 
 log = logging.getLogger(__name__)
 
 # About 15 people: mostly residents, plus people who work or spend time here.
 ROLE_MIX = {"resident": 11, "worker": 3, "visitor": 1}
+# People from across the city who join for landmarks and city-scale sites.
+CITYWIDE_COUNT = 10
+CITYWIDE_SEED = 1_000_000
 HOME_SEARCH_M = 800
 EVERYDAY_SEARCH_M = 600
 GENERATION_TIMEOUT_S = 300
@@ -175,6 +178,7 @@ class Sampled:
     home: tuple[float, float]
     places: list[Candidate] = field(default_factory=list)
     workplace_kind: str | None = None
+    interests: list[interests.Chosen] = field(default_factory=list)
 
     def brief(self) -> dict[str, Any]:
         """What the LLM is told about this person."""
@@ -194,6 +198,7 @@ class Sampled:
             "commute": self.commute_mode,
             "language_at_home": LANGUAGES.get(self.language, self.language),
             "places": [{"fid": p.fid, "name": p.name, "kind": p.kind} for p in self.places],
+            "interests": [i.label for i in self.interests],
         }
 
     def based_on(self) -> str:
@@ -384,6 +389,42 @@ async def _place_point(conn: AsyncConnection, fid: str) -> tuple[float, float]:
     return (row.x, row.y)
 
 
+async def _person(
+    conn: AsyncConnection, rng: random.Random, role: str, area: Any, key: int, seed: int
+) -> Sampled:
+    """One person's facts from their census area's distributions."""
+    bucket = _pick(rng, {k: v for k, v in area.age_dist.items() if k != "0-14"}, "25-44")
+    low, high = AGE_RANGES[bucket]
+    age = rng.randint(low, high)
+    working = role == "worker"
+    if not working and age >= 65 and rng.random() < RETIRED_SHARE_65_PLUS:
+        occupation = "retired"
+    elif not working and age <= 24 and rng.random() < STUDENT_SHARE_18_24:
+        occupation = "student"
+    else:
+        occupation = _pick(rng, area.occupation_dist, "sales_service")
+    commuting = occupation != "retired"
+    home = await _home_point(conn, area.dguid, seed)
+    return Sampled(
+        key=key,
+        role=role,
+        dguid=area.dguid,
+        home_neighbourhood=area.neighbourhood,
+        age_bucket=bucket,
+        age=age,
+        tenure="renter" if rng.random() < (area.pct_renters or 0.5) else "owner",
+        commute_mode=(
+            COMMUTE_MODES[_pick(rng, area.commute_dist, "transit")] if commuting else None
+        ),
+        occupation_group=occupation,
+        household_size=_person_household_size(rng, area.household_dist),
+        language=_pick(rng, area.language_dist, "english"),
+        housing=_pick(rng, area.housing_dist, "") or None,
+        home=home,
+        interests=await interests.choose(conn, f"sampled:{seed}", age, home),
+    )
+
+
 async def sample(conn: AsyncConnection, neighbourhood_id: int) -> list[Sampled]:
     """The facts for each persona, drawn from census distributions. Seeded per area."""
     rng = random.Random(neighbourhood_id)
@@ -398,37 +439,39 @@ async def sample(conn: AsyncConnection, neighbourhood_id: int) -> list[Sampled]:
         pool = local if role == "resident" else elsewhere
         for _ in range(count):
             area = rng.choices(pool, weights=[a.population for a in pool])[0]
-            bucket = _pick(rng, {k: v for k, v in area.age_dist.items() if k != "0-14"}, "25-44")
-            low, high = AGE_RANGES[bucket]
-            age = rng.randint(low, high)
-            working = role == "worker"
-            if not working and age >= 65 and rng.random() < RETIRED_SHARE_65_PLUS:
-                occupation = "retired"
-            elif not working and age <= 24 and rng.random() < STUDENT_SHARE_18_24:
-                occupation = "student"
-            else:
-                occupation = _pick(rng, area.occupation_dist, "sales_service")
-            commuting = occupation != "retired"
             key = len(out)
-            s = Sampled(
-                key=key,
-                role=role,
-                dguid=area.dguid,
-                home_neighbourhood=area.neighbourhood,
-                age_bucket=bucket,
-                age=age,
-                tenure="renter" if rng.random() < (area.pct_renters or 0.5) else "owner",
-                commute_mode=(
-                    COMMUTE_MODES[_pick(rng, area.commute_dist, "transit")] if commuting else None
-                ),
-                occupation_group=occupation,
-                household_size=_person_household_size(rng, area.household_dist),
-                language=_pick(rng, area.language_dist, "english"),
-                housing=_pick(rng, area.housing_dist, "") or None,
-                home=await _home_point(conn, area.dguid, neighbourhood_id * 100 + key),
-            )
+            s = await _person(conn, rng, role, area, key, neighbourhood_id * 100 + key)
             await _places_for(conn, rng, s, neighbourhood_id)
             out.append(s)
+    return out
+
+
+async def sample_citywide(conn: AsyncConnection) -> list[Sampled]:
+    """People from anywhere in the city, weighted by population."""
+    rng = random.Random("citywide")
+    areas = (
+        await conn.execute(
+            text(
+                """
+                SELECT c.dguid, c.neighbourhood_id, n.name AS neighbourhood, c.population,
+                       c.pct_renters, c.age_dist, c.occupation_dist, c.language_dist,
+                       c.housing_dist, c.commute_dist, c.household_dist
+                FROM census_areas c JOIN neighbourhoods n ON n.id = c.neighbourhood_id
+                WHERE c.population > 0 AND c.age_dist IS NOT NULL
+                ORDER BY c.dguid
+                """
+            )
+        )
+    ).all()
+    out: list[Sampled] = []
+    for key in range(CITYWIDE_COUNT):
+        area = rng.choices(areas, weights=[a.population for a in areas])[0]
+        s = await _person(conn, rng, "citywide", area, key, CITYWIDE_SEED + key)
+        # Their everyday places are around home, like a resident's.
+        s.role = "resident"
+        await _places_for(conn, rng, s, area.neighbourhood_id)
+        s.role = "citywide"
+        out.append(s)
     return out
 
 
@@ -517,6 +560,8 @@ async def ensure(engine: AsyncEngine, neighbourhood_id: int) -> tuple[list[Perso
         existing = await load(conn, neighbourhood_id)
         if existing:
             await add_missing_voices(conn, existing)
+            if await add_missing_interests(conn, existing):
+                existing = await load(conn, neighbourhood_id)
             return existing, False
         log.info("generating personas for neighbourhood %d", neighbourhood_id)
         sampled = await sample(conn, neighbourhood_id)
@@ -525,6 +570,29 @@ async def ensure(engine: AsyncEngine, neighbourhood_id: int) -> tuple[list[Perso
         for s, story in zip(sampled, stories, strict=True):
             await _insert(conn, neighbourhood_id, s, story, model)
         return await load(conn, neighbourhood_id), True
+
+
+async def ensure_citywide(engine: AsyncEngine) -> list[Persona]:
+    """The citywide personas, generating them on first use."""
+    async with engine.begin() as conn:
+        await conn.execute(text("SELECT pg_advisory_xact_lock(4, 0)"))
+        existing = await load_citywide(conn)
+        if existing:
+            return existing
+        log.info("generating citywide personas")
+        sampled = await sample_citywide(conn)
+        stories = await write_stories(sampled)
+        model = get_settings().reaction_model
+        homes = {
+            r.dguid: r.neighbourhood_id
+            for r in await conn.execute(
+                text("SELECT dguid, neighbourhood_id FROM census_areas WHERE dguid = ANY(:d)"),
+                {"d": [s.dguid for s in sampled]},
+            )
+        }
+        for s, story in zip(sampled, stories, strict=True):
+            await _insert(conn, homes[s.dguid], s, story, model)
+        return await load_citywide(conn)
 
 
 async def _insert(
@@ -544,6 +612,7 @@ async def _insert(
         "household_size": s.household_size,
         "based_on": s.based_on(),
         "tags": _tags(s, story),
+        "interests": [i.model_dump() for i in s.interests],
     }
     traits["voice"] = voices.assign(
         voices.situation(str(persona_id), s.age, s.role, story.stubbornness, traits)
@@ -586,6 +655,57 @@ async def _insert(
             ),
             {"p": persona_id, "f": c.fid, "r": story.places[c.fid]},
         )
+    await _insert_interest_places(conn, persona_id, s.interests)
+
+
+async def _insert_interest_places(
+    conn: AsyncConnection, persona_id: uuid.UUID, chosen: list[interests.Chosen]
+) -> None:
+    for i in chosen:
+        # A place they already use routinely keeps its everyday relation.
+        await conn.execute(
+            text(
+                "INSERT INTO persona_places (persona_id, place_fid, relation) "
+                "VALUES (:p, :f, :r) ON CONFLICT DO NOTHING"
+            ),
+            {"p": persona_id, "f": i.fid, "r": i.relation},
+        )
+
+
+async def backfill_interests(conn: AsyncConnection) -> int:
+    """Give every stored persona without interests theirs. Fast once all have them."""
+    ids = (
+        (await conn.execute(text("SELECT id FROM personas WHERE NOT traits ? 'interests'")))
+        .scalars()
+        .all()
+    )
+    if ids:
+        await add_missing_interests(conn, await load_ids(conn, list(ids)))
+    return len(ids)
+
+
+async def add_missing_interests(conn: AsyncConnection, personas: list[Persona]) -> bool:
+    """Give personas made before interests existed theirs, once. True if any changed.
+
+    Interests are drawn in code, so this is the same draw a new persona gets
+    (seeded by the persona's id); reload the personas afterwards for the places.
+    """
+    changed = False
+    for p in personas:
+        if "interests" in p.traits:
+            continue
+        chosen = await interests.choose(conn, str(p.id), p.age, p.home)
+        p.traits["interests"] = [i.model_dump() for i in chosen]
+        await conn.execute(
+            text(
+                "UPDATE personas SET traits = jsonb_set(traits, '{interests}', "
+                "CAST(:v AS jsonb)) WHERE id = :id"
+            ),
+            {"v": json.dumps(p.traits["interests"]), "id": p.id},
+        )
+        await _insert_interest_places(conn, p.id, chosen)
+        changed = True
+    return changed
 
 
 async def add_missing_voices(conn: AsyncConnection, personas: list[Persona]) -> None:
@@ -606,6 +726,63 @@ async def add_missing_voices(conn: AsyncConnection, personas: list[Persona]) -> 
 
 
 async def load(conn: AsyncConnection, neighbourhood_id: int) -> list[Persona]:
+    """A neighbourhood's own personas (citywide personas living there aren't in it)."""
+    return await _load(
+        conn, "p.neighbourhood_id = :n AND p.role <> 'citywide'", {"n": neighbourhood_id}
+    )
+
+
+async def load_citywide(conn: AsyncConnection) -> list[Persona]:
+    return await _load(conn, "p.role = 'citywide'", {})
+
+
+async def places_on_site(
+    conn: AsyncConnection, geometry: dict[str, Any], replaces: list[str]
+) -> set[str]:
+    """Fids of every place the proposal replaces or builds on."""
+    rows = await conn.execute(
+        text(
+            f"""
+            WITH {PLACES_SQL}
+            SELECT fid FROM places
+            WHERE fid = ANY(:replaces)
+               OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326))
+            """
+        ),
+        {"g": json.dumps(geometry), "replaces": replaces},
+    )
+    return set(rows.scalars())
+
+
+async def load_using(conn: AsyncConnection, fids: set[str]) -> list[Persona]:
+    """Personas from anywhere who use any of these places.
+
+    Fans of a venue live all over the city; this is how they hear about it.
+    """
+    if not fids:
+        return []
+    ids = (
+        (
+            await conn.execute(
+                text("SELECT DISTINCT persona_id FROM persona_places WHERE place_fid = ANY(:f)"),
+                {"f": list(fids)},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return await load_ids(conn, list(ids)) if ids else []
+
+
+def uses_any(p: Persona, fids: set[str]) -> bool:
+    return any(pl.fid in fids for pl in p.places)
+
+
+async def load_ids(conn: AsyncConnection, ids: list[uuid.UUID]) -> list[Persona]:
+    return await _load(conn, "p.id = ANY(:ids)", {"ids": ids})
+
+
+async def _load(conn: AsyncConnection, where: str, params: dict[str, Any]) -> list[Persona]:
     rows = (
         await conn.execute(
             text(
@@ -621,12 +798,12 @@ async def load(conn: AsyncConnection, neighbourhood_id: int) -> list[Persona]:
                 FROM personas p
                 LEFT JOIN persona_places pp ON pp.persona_id = p.id
                 LEFT JOIN places pl ON pl.fid = pp.place_fid
-                WHERE p.neighbourhood_id = :n
+                WHERE {where}
                 GROUP BY p.id
                 ORDER BY p.created_at, p.id
                 """
             ),
-            {"n": neighbourhood_id},
+            params,
         )
     ).all()
     return [
@@ -673,8 +850,15 @@ def groups(p: Persona) -> set[str]:
     return out
 
 
-def select(personas: list[Persona], relevant_to: list[str], limit: int = 15) -> list[Persona]:
-    """The personas who react, most relevant to this kind of proposal first."""
+def select(
+    personas: list[Persona],
+    relevant_to: list[str],
+    limit: int = 15,
+    touched: set[str] | None = None,
+) -> list[Persona]:
+    """The personas who react, most relevant to this kind of proposal first; with
+    `touched` (place fids), those who use one of those places come first."""
     wanted = set(relevant_to)
-    ranked = sorted(personas, key=lambda p: -len(wanted & groups(p)))
+    fids = touched or set()
+    ranked = sorted(personas, key=lambda p: (not uses_any(p, fids), -len(wanted & groups(p))))
     return ranked[:limit]
