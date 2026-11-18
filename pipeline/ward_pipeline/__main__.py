@@ -6,6 +6,7 @@ python -m ward_pipeline --area all             the whole city, one neighbourhood
 python -m ward_pipeline --only streets,cycling  just these citywide sources
 python -m ward_pipeline --only applications,consultation  development applications and
                                                residents' comments from staff reports
+python -m ward_pipeline --only embeddings      embed comments that have no vector yet
 python -m ward_pipeline --area 165 --only census  reload census for an area
 """
 
@@ -26,6 +27,7 @@ from .sources import (
     census,
     consultation,
     cycling,
+    embeddings,
     neighbourhoods,
     osm,
     parcels,
@@ -43,6 +45,7 @@ CITYWIDE = {
     # Comments are located at their applications, so applications go first.
     "applications": applications.ingest,
     "consultation": consultation.ingest,
+    "embeddings": embeddings.ingest,
 }
 ONLY = ["census", *CITYWIDE]
 # After a neighbourhood fails, wait this long before the next one.

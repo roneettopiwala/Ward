@@ -8,3 +8,4 @@ litellm>=1.80
 pyyaml>=6.0
 sse-starlette>=3.0
 ruff>=0.8
+fastembed>=0.5

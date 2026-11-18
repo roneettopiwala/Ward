@@ -367,9 +367,9 @@ def ingest(eng: Engine) -> int:
                 }
             )
     with eng.begin() as conn:
-        conn.execute(text("DELETE FROM comments WHERE source = 'staff_report'"))
         for row in rows:
             # Located at the first of the report's applications that the open data has.
+            # A comment whose text is unchanged keeps its vector and tags.
             conn.execute(
                 text(
                     """
@@ -385,10 +385,30 @@ def ingest(eng: Engine) -> int:
                         ORDER BY array_position(:apps, application_number)
                         LIMIT 1
                     ) a ON true
+                    ON CONFLICT (id) DO UPDATE SET
+                      source_url = EXCLUDED.source_url,
+                      application_number = EXCLUDED.application_number,
+                      report_title = EXCLUDED.report_title,
+                      report_date = EXCLUDED.report_date,
+                      neighbourhood_id = EXCLUDED.neighbourhood_id,
+                      geom = EXCLUDED.geom,
+                      embedding = CASE WHEN comments.text = EXCLUDED.text
+                                       THEN comments.embedding END,
+                      embedding_model = CASE WHEN comments.text = EXCLUDED.text
+                                             THEN comments.embedding_model END,
+                      themes = CASE WHEN comments.text = EXCLUDED.text THEN comments.themes END,
+                      stance = CASE WHEN comments.text = EXCLUDED.text THEN comments.stance END,
+                      tagged_by = CASE WHEN comments.text = EXCLUDED.text
+                                       THEN comments.tagged_by END,
+                      text = EXCLUDED.text
                     """
                 ),
                 row,
             )
+        conn.execute(
+            text("DELETE FROM comments WHERE source = 'staff_report' AND NOT (id = ANY(:ids))"),
+            {"ids": [r["id"] for r in rows]},
+        )
         located = conn.scalar(
             text("SELECT count(*) FROM comments WHERE source = 'staff_report' AND geom IS NOT NULL")
         )
