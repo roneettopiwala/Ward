@@ -6,13 +6,13 @@ import { useEffect, useRef, useState } from "react";
 import { analyzeProposal } from "@/lib/analysis";
 import { useMapStore } from "@/lib/store";
 import { catalogMap, stackLabel, stackSummary } from "@/lib/parts";
-import type { Analysis, Fact, PersonaCard, ProCon, Sentiment, Stance } from "@/lib/types";
+import type { Analysis, ContextCard, Fact, PersonaCard, ProCon, Sentiment, Stance } from "@/lib/types";
 
 import { km } from "./persona-pins";
 
 const percent = (share: number) => `${Math.round(share * 100)}%`;
 
-type Tab = "summary" | "personas" | "data";
+type Tab = "summary" | "personas" | "area" | "data";
 /** Impact facts shown under a persona's reasons; the server lists the most important first. */
 const IMPACT_SHOWN = 3;
 type Filter = "all" | Stance;
@@ -348,6 +348,78 @@ function FactList({ facts }: { facts: Fact[] }) {
   );
 }
 
+function AreaSection({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-4">
+      <Label>{label}</Label>
+      <div className="mt-1.5 text-sm">{children}</div>
+    </div>
+  );
+}
+
+/** One neighbourhood's context card, from city data only. */
+function Area({ card, open }: { card: ContextCard; open: boolean }) {
+  return (
+    <details open={open} className="group border-b border-border py-4">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <h3 className="font-semibold">{card.name}</h3>
+        <Plus className="size-4 text-fg-muted group-open:hidden" />
+        <Minus className="hidden size-4 text-fg-muted group-open:block" />
+      </summary>
+
+      {card.people.length > 0 && (
+        <AreaSection label="Who lives here">
+          <ul className="flex flex-col gap-0.5">
+            {card.people.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </AreaSection>
+      )}
+
+      <AreaSection label="Recent development">
+        <p>{card.developmentsSummary}</p>
+        {card.recentDevelopments.length > 0 && (
+          <ul className="mt-2 flex flex-col gap-2">
+            {card.recentDevelopments.map((d) => (
+              <li key={`${d.address}-${d.submitted}`} className="rounded-control border border-border p-2.5">
+                <p className="flex justify-between gap-3">
+                  <span className="font-medium">{d.address}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-fg-muted">{d.submitted}</span>
+                </p>
+                <p className="mt-0.5 text-fg-muted">{d.summary}</p>
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-fg-subtle">{d.status}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </AreaSection>
+
+      {(card.places.length > 0 || card.anchors.length > 0) && (
+        <AreaSection label="Everyday places">
+          <p className="text-fg-muted">{card.places.join(" · ")}</p>
+          {card.anchors.length > 0 && <p className="mt-1">{card.anchors.join(" · ")}</p>}
+        </AreaSection>
+      )}
+
+      {card.themes.length > 0 && (
+        <AreaSection label="What residents often raise">
+          <ul className="flex flex-wrap gap-1.5">
+            {card.themes.map((t) => (
+              <li key={t} className="rounded border border-border-strong px-2 py-0.5 text-xs first-letter:uppercase">
+                {t}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-fg-subtle">
+            Source · {card.themesComments} consultation comments, {card.themesScope}
+          </p>
+        </AreaSection>
+      )}
+    </details>
+  );
+}
+
 /** The results side panel for the open proposal: sentiment, pros and cons, personas and facts. */
 export default function ResultsPanel() {
   const proposal = useMapStore((s) => s.proposals.find((p) => p.id === s.activeProposal));
@@ -377,12 +449,13 @@ export default function ResultsPanel() {
     parentAnalysis?.sentiment && proposal.version > 1
       ? { version: proposal.version - 1, sentiment: parentAnalysis.sentiment }
       : undefined;
-  const { status, factSheet, pros, cons, personas = [], sentiment } = analysis;
+  const { status, factSheet, context = [], pros, cons, personas = [], sentiment } = analysis;
   const facts = new Map(factSheet?.facts.map((f) => [f.id, f]));
   const working = status !== "done" && status !== "error";
   const tabLabel: Record<Tab, string> = {
     summary: "Summary",
     personas: analysis.personaTotal ? `Personas (${personas.length})` : "Personas",
+    area: "Area",
     data: factSheet ? `Data (${factSheet.facts.length})` : "Data",
   };
 
@@ -444,7 +517,7 @@ export default function ResultsPanel() {
         )}
 
         <nav className="mt-4 flex gap-5 text-sm" aria-label="Result views">
-          {(["summary", "personas", "data"] as const).map((t) => (
+          {(["summary", "personas", "area", "data"] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -517,6 +590,23 @@ export default function ResultsPanel() {
                   : "Choosing who reacts…"}
               </p>
             )
+          ))}
+
+        {tab === "area" &&
+          (context.length ? (
+            <>
+              {context.map((card, i) => (
+                <Area key={card.neighbourhoodId} card={card} open={i === 0} />
+              ))}
+              <p className="mt-3 text-xs text-fg-subtle">
+                From the census, the City&apos;s development applications, OpenStreetMap and planning staff
+                reports.
+              </p>
+            </>
+          ) : working ? (
+            <Skeleton rows={4} />
+          ) : (
+            <p className="mt-5 text-sm text-fg-muted">No neighbourhood data for this proposal.</p>
           ))}
 
         {tab === "data" && (factSheet ? <FactList facts={factSheet.facts} /> : working && <Skeleton rows={6} />)}

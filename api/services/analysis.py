@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from services import areas, impact, llm, personas, proposals, reactions, retrieval
+from services import areas, context, impact, llm, personas, proposals, reactions, retrieval
 from services.catalog import Stack
 from services.facts import FactSheet, ProposalInput, build_fact_sheet
 from services.pros_cons import ProsConsResult, generate
@@ -36,7 +36,15 @@ PERSONAS_PER_PROPOSAL = 15
 
 class AnalysisEvent(BaseModel):
     event: Literal[
-        "status", "fact_sheet", "pros_cons", "personas", "persona", "sentiment", "done", "error"
+        "status",
+        "fact_sheet",
+        "context",
+        "pros_cons",
+        "personas",
+        "persona",
+        "sentiment",
+        "done",
+        "error",
     ]
     data: dict[str, Any]
 
@@ -72,7 +80,7 @@ async def analyze(
             return
         cards = await proposals.reaction_cards(conn, proposal_id)
         if stored.status == "done" and stored.fact_sheet and stored.pros_cons and cards:
-            async for e in _replay(stored.fact_sheet, stored.pros_cons, cards):
+            async for e in _replay(stored.fact_sheet, stored.pros_cons, cards, stored.context):
                 yield e
             return
 
@@ -140,6 +148,12 @@ async def _personas(
             )
         raise PersonaError("This site is outside the City of Toronto, where Ward has data.")
 
+    # Context cards for the neighbourhoods personas come from, most affected first.
+    async with engine.connect() as conn:
+        cards = await context.build_many(conn, list(seats))
+        await proposals.save_context(conn, proposal_id, [c.model_dump() for c in cards.values()])
+    await emit(_context_event(list(cards.values())))
+
     # Personas are made once per neighbourhood, on first use, then reused.
     async with engine.begin() as conn:
         pools = {nid: await personas.load(conn, nid) for nid in seats}
@@ -165,7 +179,7 @@ async def _personas(
         await proposals.clear_reactions(conn, proposal_id)
         await emit(AnalysisEvent(event="personas", data={"total": len(chosen)}))
         done: list[reactions.Reaction] = []
-        async for p, r in reactions.react_all(chosen, impacts, sheet, references):
+        async for p, r in reactions.react_all(chosen, impacts, sheet, references, cards):
             if r is None:
                 continue
             card = reactions.card(p, impacts[p.id], r)
@@ -222,10 +236,15 @@ async def _merge(*jobs: Callable[[Emit], Awaitable[None]]) -> AsyncIterator[Anal
 
 
 async def _replay(
-    sheet: FactSheet, result: ProsConsResult, cards: list[dict[str, Any]]
+    sheet: FactSheet,
+    result: ProsConsResult,
+    cards: list[dict[str, Any]],
+    neighbourhoods: list[dict[str, Any]] | None,
 ) -> AsyncIterator[AnalysisEvent]:
     yield AnalysisEvent(event="status", data={"status": "done", "cached": True})
     yield _sheet_event(sheet)
+    if neighbourhoods:
+        yield AnalysisEvent(event="context", data={"cards": neighbourhoods})
     yield _pros_cons_event(result)
     yield AnalysisEvent(event="personas", data={"total": len(cards)})
     for card in cards:
@@ -238,6 +257,10 @@ async def _replay(
     ]
     yield AnalysisEvent(event="sentiment", data=reactions.sentiment(done).model_dump())
     yield AnalysisEvent(event="done", data={})
+
+
+def _context_event(cards: list[context.ContextCard]) -> AnalysisEvent:
+    return AnalysisEvent(event="context", data={"cards": [c.model_dump() for c in cards]})
 
 
 def _status(status: str) -> AnalysisEvent:

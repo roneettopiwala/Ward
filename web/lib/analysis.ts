@@ -18,6 +18,7 @@ export async function analyzeProposal(proposal: Proposal): Promise<void> {
     status: "creating",
     error: undefined,
     factSheet: undefined,
+    context: undefined,
     pros: undefined,
     cons: undefined,
     personaTotal: undefined,
@@ -38,6 +39,7 @@ export async function analyzeProposal(proposal: Proposal): Promise<void> {
   streamAnalysis(serverId, {
     status: (s) => update({ status: STATUSES[s] ?? "analyzing" }),
     factSheet: (factSheet) => update({ factSheet }),
+    context: (context) => update({ context }),
     prosCons: (pros, cons) => update({ pros, cons }),
     personas: (personaTotal) => update({ personaTotal, personas: [] }),
     persona: (card) =>
