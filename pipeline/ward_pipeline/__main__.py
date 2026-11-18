@@ -7,6 +7,8 @@ python -m ward_pipeline --only streets,cycling  just these citywide sources
 python -m ward_pipeline --only applications,consultation  development applications and
                                                residents' comments from staff reports
 python -m ward_pipeline --only embeddings      embed comments that have no vector yet
+python -m ward_pipeline --only heritage,landmarks  heritage register; notable OSM places
+                                               with Wikidata facts
 python -m ward_pipeline --area 165 --only census  reload census for an area
 """
 
@@ -28,6 +30,8 @@ from .sources import (
     consultation,
     cycling,
     embeddings,
+    heritage,
+    landmarks,
     neighbourhoods,
     osm,
     parcels,
@@ -46,6 +50,8 @@ CITYWIDE = {
     "applications": applications.ingest,
     "consultation": consultation.ingest,
     "embeddings": embeddings.ingest,
+    "heritage": heritage.ingest,
+    "landmarks": landmarks.ingest,
 }
 ONLY = ["census", *CITYWIDE]
 # After a neighbourhood fails, wait this long before the next one.

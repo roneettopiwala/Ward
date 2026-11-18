@@ -53,6 +53,7 @@ _CASTS = {
         "household_dist": "jsonb",
     },
     "transit_stops": {"routes": "text[]"},
+    "landmarks": {"wd_heritage": "text[]"},
 }
 
 

@@ -107,20 +107,36 @@ LANDMARK_KINDS = [
 ]  # fmt: skip
 
 
+# A venue this big draws people from across the city.
+CITYWIDE_CAPACITY = 5000
+
+
 async def landmarks(conn: AsyncConnection, geometry: dict[str, Any]) -> list[str]:
-    """Names of city-scale places the proposal's site covers."""
+    """Names of city-scale places the proposal's site covers: destination POIs, big
+    venues, and individually designated heritage sites notable enough for Wikidata."""
     return list(
         (
             await conn.execute(
                 text(
                     """
-                    SELECT DISTINCT name FROM pois
+                    WITH site AS (SELECT ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326) AS g)
+                    SELECT name FROM pois, site
                     WHERE category = ANY(:kinds) AND name IS NOT NULL
-                      AND ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326))
+                      AND ST_Intersects(geom, site.g)
+                    UNION
+                    SELECT l.name FROM landmarks l, site
+                    WHERE ST_Intersects(l.geom, site.g)
+                      AND (GeometryType(l.geom) = 'POINT'
+                           OR ST_Area(ST_Intersection(l.geom, site.g)) >= 0.5 * ST_Area(l.geom))
+                      AND (coalesce(l.wd_capacity, l.osm_capacity) >= :capacity
+                           OR (l.wikidata IS NOT NULL AND EXISTS (
+                                 SELECT 1 FROM heritage_properties h
+                                 WHERE h.status = 'Part IV'
+                                   AND ST_DWithin(h.geom::geography, site.g::geography, 15))))
                     ORDER BY name
                     """
                 ),
-                {"kinds": LANDMARK_KINDS, "g": json.dumps(geometry)},
+                {"kinds": LANDMARK_KINDS, "g": json.dumps(geometry), "capacity": CITYWIDE_CAPACITY},
             )
         ).scalars()
     )

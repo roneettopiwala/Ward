@@ -216,6 +216,36 @@ CREATE TABLE comments (
   tagged_by           TEXT                    -- which model wrote themes and stance
 );
 
+-- Named OpenStreetMap features that are notable: a Wikidata link, a capacity, or
+-- a heritage or historic tag. Wikidata columns are filled only when the pipeline
+-- has a contact for Wikimedia's robot policy (WIKIDATA_CONTACT).
+CREATE TABLE landmarks (
+  fid               TEXT PRIMARY KEY,         -- 'osm:w7969701'
+  name              TEXT NOT NULL,
+  kind              TEXT,                     -- OSM category, e.g. stadium, museum
+  wikidata          TEXT,                     -- e.g. 'Q1124'
+  osm_capacity      INT,
+  osm_opened        TEXT,
+  osm_heritage      TEXT,
+  wd_description    TEXT,
+  wd_opened         INT,
+  wd_capacity       INT,
+  wd_heritage       TEXT[],
+  geom              GEOMETRY(Geometry, 4326) NOT NULL
+);
+
+-- Toronto Heritage Register: listed and designated properties (address points).
+CREATE TABLE heritage_properties (
+  id                INT PRIMARY KEY,
+  address           TEXT,
+  status            TEXT,                     -- 'Part IV', 'Part V', 'Listed'
+  district          TEXT,
+  built             TEXT,
+  architect         TEXT,
+  description       TEXT,
+  geom              GEOMETRY(Point, 4326) NOT NULL
+);
+
 -- =========================================================
 -- 5. EVALUATION
 -- =========================================================
@@ -254,6 +284,8 @@ CREATE INDEX ON personas              USING GIST (home);
 CREATE INDEX ON proposals             USING GIST (geom);
 CREATE INDEX ON applications          USING GIST (geom);
 CREATE INDEX ON comments              USING GIST (geom);
+CREATE INDEX ON landmarks             USING GIST (geom);
+CREATE INDEX ON heritage_properties   USING GIST (geom);
 
 CREATE INDEX ON personas (neighbourhood_id);
 CREATE INDEX ON persona_reactions (proposal_id);
