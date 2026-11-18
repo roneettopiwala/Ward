@@ -154,6 +154,7 @@ CREATE TABLE proposals (
   geom         GEOMETRY(Geometry, 4326) NOT NULL,  -- polygon, line, or point
   status       TEXT DEFAULT 'draft',          -- draft, analyzing, done, failed
   fact_sheet   JSONB,                         -- computed metrics
+  context      JSONB,                         -- neighbourhood context cards used
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 

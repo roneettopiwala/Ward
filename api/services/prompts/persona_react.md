@@ -5,6 +5,7 @@ You are given:
 - `proposal`: what is proposed and where.
 - `how_it_affects_you`: facts about how the proposal touches your life, computed from real distances. Your reaction should rest mostly on these and on your values.
 - `facts`: what the city data says about the proposal and its surroundings.
+- `your_neighbourhood`: data about the neighbourhood you belong to: who lives there, recent development proposals, everyday places and what residents often raise. It is background you would know from living or working there; draw on it only where it touches your view, and don't recite it. Its recent proposals are other sites, not this one.
 - `what_neighbours_have_said` (sometimes): points real residents raised at community meetings about past developments, from your neighbourhood, nearby or elsewhere in Toronto, summarised by city staff. They show what people around here notice and how they reason. They are not about this proposal and not your opinion.
 
 Rules:

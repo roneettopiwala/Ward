@@ -2,6 +2,7 @@ import type {
   BaseFeature,
   CatalogParam,
   CatalogType,
+  ContextCard,
   DrawRules,
   DrawTool,
   Fact,
@@ -285,9 +286,23 @@ type PersonaCardEvent = {
   themes: string[];
 };
 
+type ContextCardEvent = {
+  neighbourhood_id: number;
+  name: string;
+  people: string[];
+  developments_summary: string;
+  recent_developments: ContextCard["recentDevelopments"];
+  places: string[];
+  anchors: string[];
+  themes: string[];
+  themes_comments: number;
+  themes_scope: string;
+};
+
 export type AnalysisHandlers = {
   status: (status: string) => void;
   factSheet: (sheet: FactSheet) => void;
+  context: (cards: ContextCard[]) => void;
   prosCons: (pros: ProCon[], cons: ProCon[]) => void;
   personas: (total: number) => void;
   persona: (card: PersonaCard) => void;
@@ -312,6 +327,22 @@ export function streamAnalysis(serverId: string, on: AnalysisHandlers): () => vo
       facts: s.facts.map(({ id, label, display, source }) => ({ id, label, display, source })),
     });
   });
+  source.addEventListener("context", (e) =>
+    on.context(
+      data<{ cards: ContextCardEvent[] }>(e).cards.map((c) => ({
+        neighbourhoodId: c.neighbourhood_id,
+        name: c.name,
+        people: c.people,
+        developmentsSummary: c.developments_summary,
+        recentDevelopments: c.recent_developments,
+        places: c.places,
+        anchors: c.anchors,
+        themes: c.themes,
+        themesComments: c.themes_comments,
+        themesScope: c.themes_scope,
+      })),
+    ),
+  );
   source.addEventListener("pros_cons", (e) => {
     const r = data<{ pros: ProCon[]; cons: ProCon[] }>(e);
     on.prosCons(r.pros, r.cons);

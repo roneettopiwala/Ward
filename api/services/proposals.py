@@ -34,6 +34,8 @@ class StoredProposal(BaseModel):
     proposal: ProposalInput
     fact_sheet: FactSheet | None
     pros_cons: ProsConsResult | None
+    context: list[dict[str, Any]] | None = None
+    """Neighbourhood context cards, most affected neighbourhood first."""
 
 
 def validate_parts(parts: list[Part], geometry_type: str | None) -> list[Part]:
@@ -103,6 +105,7 @@ async def get(conn: AsyncConnection, proposal_id: uuid.UUID) -> StoredProposal |
             text(
                 """
                 SELECT p.id, p.status, p.type, p.params, p.components, p.replaces, p.fact_sheet,
+                       p.context,
                        ST_AsGeoJSON(p.geom) AS geometry, pc.pros, pc.cons, pc.model
                 FROM proposals p LEFT JOIN pros_cons pc ON pc.proposal_id = p.id
                 WHERE p.id = :id
@@ -130,6 +133,7 @@ async def get(conn: AsyncConnection, proposal_id: uuid.UUID) -> StoredProposal |
         ),
         fact_sheet=FactSheet.model_validate(row.fact_sheet) if row.fact_sheet else None,
         pros_cons=pros_cons,
+        context=row.context,
     )
 
 
@@ -143,6 +147,17 @@ async def save_fact_sheet(conn: AsyncConnection, proposal_id: uuid.UUID, sheet: 
         "UPDATE proposals SET fact_sheet = CAST(:f AS jsonb) WHERE id = :id",
         id=proposal_id,
         f=sheet.model_dump_json(),
+    )
+
+
+async def save_context(
+    conn: AsyncConnection, proposal_id: uuid.UUID, cards: list[dict[str, Any]]
+) -> None:
+    await _write(
+        conn,
+        "UPDATE proposals SET context = CAST(:c AS jsonb) WHERE id = :id",
+        id=proposal_id,
+        c=json.dumps(cards),
     )
 
 

@@ -18,6 +18,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from services import llm, retrieval, voices
+from services.context import ContextCard
 from services.facts import FactSheet
 from services.impact import PersonalImpact
 from services.personas import Persona
@@ -119,9 +120,10 @@ async def react(
     impact: PersonalImpact,
     sheet: FactSheet,
     references: list[retrieval.Reference] | None = None,
+    neighbourhood: ContextCard | None = None,
 ) -> PersonaReaction:
     references = references or []
-    payload = {
+    payload: dict = {
         "you": _profile(p),
         "proposal": {
             "type": sheet.type_label,
@@ -132,8 +134,15 @@ async def react(
         "how_it_affects_you": impact.bullets,
         "facts": [f"{f.label}: {f.display}" for f in sheet.facts],
     }
-    # Numbers in neighbours' comments are about other sites, so they aren't allowed.
-    allowed = json.dumps(payload, ensure_ascii=False)
+    if neighbourhood:
+        payload["your_neighbourhood"] = neighbourhood.for_prompt()
+    # Numbers in neighbours' comments and in other recent proposals are about other
+    # sites, so they aren't allowed in the reply.
+    allowed = json.dumps(
+        {**payload, "your_neighbourhood": {**payload.get("your_neighbourhood", {}),
+                                           "recent_proposals": []}},
+        ensure_ascii=False,
+    )  # fmt: skip
     if references:
         payload["what_neighbours_have_said"] = [
             {"comment": r.text, "from": r.where, "feeling": r.stance} for r in references
@@ -162,6 +171,7 @@ async def react_all(
     impacts: dict,
     sheet: FactSheet,
     references: dict | None = None,
+    neighbourhoods: dict[int, ContextCard] | None = None,
 ) -> AsyncIterator[tuple[Persona, PersonaReaction | None]]:
     """Reactions in the order they finish; None for a persona whose replies failed twice."""
     gate = asyncio.Semaphore(PARALLEL)
@@ -169,7 +179,13 @@ async def react_all(
     async def one(p: Persona) -> tuple[Persona, PersonaReaction | None]:
         async with gate:
             try:
-                return p, await react(p, impacts[p.id], sheet, (references or {}).get(p.id))
+                return p, await react(
+                    p,
+                    impacts[p.id],
+                    sheet,
+                    (references or {}).get(p.id),
+                    (neighbourhoods or {}).get(p.neighbourhood_id),
+                )
             except llm.LLMError:
                 log.warning("persona %s (%s) gave no valid reaction", p.name, p.id)
                 return p, None

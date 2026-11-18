@@ -181,6 +181,23 @@ export type PersonaCard = {
   themes: string[];
 };
 
+/** A neighbourhood's context card: who lives there, recent developments, places, concerns. */
+export type ContextCard = {
+  neighbourhoodId: number;
+  name: string;
+  people: string[];
+  developmentsSummary: string;
+  recentDevelopments: { address: string; submitted: string; status: string; summary: string }[];
+  places: string[];
+  /** Named places: the largest parks and rapid transit stations. */
+  anchors: string[];
+  /** What residents most often raised at past consultations, most common first. */
+  themes: string[];
+  themesComments: number;
+  /** "this neighbourhood", "within 3 km", or "" when there are no comments. */
+  themesScope: string;
+};
+
 export type Sentiment = {
   count: number;
   mean: number;
@@ -208,6 +225,8 @@ export type Analysis = {
   status: AnalysisStatus;
   serverId?: string;
   factSheet?: FactSheet;
+  /** Context cards for the neighbourhoods personas come from, most affected first. */
+  context?: ContextCard[];
   pros?: ProCon[];
   cons?: ProCon[];
   /** How many personas are reacting, once they're chosen. */
