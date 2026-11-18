@@ -43,6 +43,8 @@ SOURCE_TTC = "TTC network"
 SOURCE_PARKS = "City parkland data"
 SOURCE_OSM = "OpenStreetMap"
 SOURCE_CENSUS = "2021 Census"
+SOURCE_WIKIDATA = "Wikidata"
+SOURCE_HERITAGE = "Toronto Heritage Register"
 
 
 class Fact(BaseModel):
@@ -154,7 +156,91 @@ def _display(value: float | str | list[str] | None, unit: str | None) -> str:
     return f"{number} {unit}" if unit else number
 
 
+# Heritage address points sit on the lot, not always inside the footprint.
+HERITAGE_REACH_M = 15
+LANDMARKS_SHOWN = 3
+HERITAGE_STATUS = {
+    "Part IV": "Designated heritage property (Part IV, Ontario Heritage Act)",
+    "Part V": "In a Heritage Conservation District (Part V, Ontario Heritage Act)",
+    "Listed": "Listed on the Heritage Register (not designated)",
+}
+
+
+async def _landmarks(ctx: Context) -> None:
+    """What notable places the site covers: name, what it is, opening year, capacity."""
+    rows = await ctx.rows(
+        """
+        SELECT l.name, l.kind, l.wd_description, l.wd_heritage,
+               coalesce(l.wd_opened, substring(l.osm_opened FROM '^\\d{4}')::int) AS opened,
+               l.wd_opened IS NOT NULL AS opened_wd,
+               coalesce(l.wd_capacity, l.osm_capacity) AS capacity,
+               l.wd_capacity IS NOT NULL AS capacity_wd
+        FROM landmarks l, site
+        WHERE ST_Intersects(l.geom, site.g)
+          -- The site must cover the landmark (half of it, or its point), not sit
+          -- inside it: a building on a campus doesn't replace the campus.
+          AND (GeometryType(l.geom) = 'POINT'
+               OR ST_Area(ST_Intersection(l.geom, site.g)) >= 0.5 * ST_Area(l.geom))
+        ORDER BY coalesce(l.wd_capacity, l.osm_capacity) DESC NULLS LAST,
+                 (l.wikidata IS NULL), ST_Area(l.geom::geography) DESC, l.name
+        LIMIT :n
+        """,
+        n=LANDMARKS_SHOWN,
+    )
+    rows = list({r.name: r for r in rows}.values())
+    if not rows:
+        return
+    described = [
+        f"{r.name}: {r.wd_description}"
+        if r.wd_description
+        else f"{r.name} ({r.kind or 'landmark'})"
+        for r in rows
+    ]
+    source = SOURCE_WIKIDATA if any(r.wd_description for r in rows) else SOURCE_OSM
+    ctx.add("landmark.name", "Landmark", "; ".join(described), source)
+    top = rows[0]
+    if top.opened:
+        ctx.add("landmark.opened", f"{top.name} opened", str(top.opened),
+                SOURCE_WIKIDATA if top.opened_wd else SOURCE_OSM)  # fmt: skip
+    if top.capacity:
+        ctx.add("landmark.capacity", f"{top.name} capacity", top.capacity,
+                SOURCE_WIKIDATA if top.capacity_wd else SOURCE_OSM, "people")  # fmt: skip
+    designations = sorted({d for r in rows for d in (r.wd_heritage or [])})
+    if designations:
+        ctx.add("landmark.designations", "Heritage designations", ", ".join(designations),
+                SOURCE_WIKIDATA)  # fmt: skip
+
+
+async def _heritage(ctx: Context) -> None:
+    """Heritage Register properties on the site, strongest protection first."""
+    rows = await ctx.rows(
+        """
+        SELECT h.status, h.district, h.built, h.description
+        FROM heritage_properties h, site
+        WHERE ST_DWithin(h.geom::geography, site.g::geography, :reach)
+        ORDER BY CASE h.status WHEN 'Part IV' THEN 0 WHEN 'Listed' THEN 1 ELSE 2 END, h.id
+        """,
+        reach=HERITAGE_REACH_M,
+    )
+    if not rows:
+        return
+    top = rows[0]
+    status = HERITAGE_STATUS.get(top.status, top.status)
+    if top.status == "Part V" and top.district:
+        status += f": {top.district}"
+    name = (top.description or "").split(";")[0].strip()
+    if top.status != "Part V" and name and len(name) <= 60:
+        status = f"{name}, {status[0].lower()}{status[1:]}"
+    if top.built:
+        status += f", built {top.built}"
+    ctx.add("heritage.status", "Heritage status", status, SOURCE_HERITAGE)
+    if len(rows) > 1:
+        ctx.add("heritage.count", "Heritage properties on the site", len(rows), SOURCE_HERITAGE)
+
+
 async def replaced(ctx: Context) -> None:
+    await _landmarks(ctx)
+    await _heritage(ctx)
     rows = await ctx.rows(
         """
         SELECT name, use, height_m, ST_Area(geom::geography) AS area
