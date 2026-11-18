@@ -6,6 +6,9 @@ Roles:
 - `resident`: lives in the neighbourhood.
 - `worker`: lives elsewhere (`lives_in`) and works at the first place in their list.
 - `visitor`: lives elsewhere and comes for the places in their list.
+- `citywide`: lives in `lives_in`, somewhere in Toronto, and speaks up about landmarks and city-scale changes, not only their own street.
+
+`interests` are things each person does, sampled from real participation rates (e.g. "follows the Blue Jays and goes to games"). Weave them into the backstory or quirks where they fit; don't add other hobbies tied to named places.
 
 For each person write:
 - `name`: a fictional first and last name, plausible for someone in Toronto who speaks their `language_at_home`. Never a real public figure. Every first name must be different, and vary backgrounds across the group.

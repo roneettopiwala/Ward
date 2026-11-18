@@ -32,6 +32,10 @@ CACHE_TTL_S = 7 * 24 * 3600
 MIN_REACTION_SHARE = 0.5
 # How many personas react to each proposal, across the neighbourhoods it affects.
 PERSONAS_PER_PROPOSAL = 15
+# Seats for people from elsewhere whose places (a stadium they go to, say) the
+# proposal replaces, and for citywide personas when the site is a landmark.
+AFFECTED_SEATS = 3
+CITYWIDE_SEATS = 3
 
 
 class AnalysisEvent(BaseModel):
@@ -137,9 +141,19 @@ async def _personas(
     sheet: FactSheet,
     emit: Emit,
 ) -> None:
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         area = await areas.resolve(conn, proposal.geometry, stack.impact_radius_m)
+        landmarks = await areas.landmarks(conn, proposal.geometry)
+        await personas.backfill_interests(conn)
+        on_site = await personas.places_on_site(conn, proposal.geometry, proposal.replaces)
+        affected = await personas.load_using(conn, on_site)
     seats = areas.persona_seats(area, PERSONAS_PER_PROPOSAL)
+    # People from elsewhere who use a place here: fans of a venue, say.
+    outside = [p for p in affected if p.role == "citywide" or p.neighbourhood_id not in seats]
+    outside = personas.select(outside, stack.relevant_to, limit=AFFECTED_SEATS, touched=on_site)
+    citywide_seats = CITYWIDE_SEATS if landmarks else 0
+    if outside or citywide_seats:
+        seats = areas.persona_seats(area, PERSONAS_PER_PROPOSAL - len(outside) - citywide_seats)
     if not seats:
         if area.missing:
             raise PersonaError(
@@ -159,17 +173,36 @@ async def _personas(
         pools = {nid: await personas.load(conn, nid) for nid in seats}
         for pool in pools.values():
             await personas.add_missing_voices(conn, pool)
+        citywide = await personas.load_citywide(conn) if citywide_seats else []
     new = [nid for nid, pool in pools.items() if not pool]
     if new:
         names = [n.name for n in area.neighbourhoods if n.id in new]
         await emit(_status(f"generating personas for {', '.join(names)}"))
-        made = await asyncio.gather(*(personas.ensure(engine, nid) for nid in new))
-        pools.update({nid: pool for nid, (pool, _) in zip(new, made, strict=True)})
+    make_citywide = bool(citywide_seats and not citywide)
+    if make_citywide:
+        await emit(_status(f"{', '.join(landmarks)} draws people from across the city"))
+
+    async def no_citywide() -> list[personas.Persona]:
+        return citywide
+
+    made, citywide = await asyncio.gather(
+        asyncio.gather(*(personas.ensure(engine, nid) for nid in new)),
+        personas.ensure_citywide(engine) if make_citywide else no_citywide(),
+    )
+    pools.update({nid: pool for nid, (pool, _) in zip(new, made, strict=True)})
+    taken = {p.id for p in outside}
     chosen = [
         p
         for nid, n in seats.items()
         for p in personas.select(pools[nid], stack.relevant_to, limit=n)
     ]
+    chosen += outside
+    chosen += personas.select(
+        [p for p in citywide if p.id not in taken],
+        stack.relevant_to,
+        limit=citywide_seats,
+        touched=on_site,
+    )
 
     async with engine.connect() as conn:
         impacts = await impact.compute(

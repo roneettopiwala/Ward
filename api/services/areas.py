@@ -100,6 +100,32 @@ async def resolve(conn: AsyncConnection, geometry: dict[str, Any], radius_m: flo
     )
 
 
+# Places that draw people from across the city, so citywide personas join.
+LANDMARK_KINDS = [
+    "attraction", "stadium", "theatre", "museum", "aquarium", "arts_centre", "gallery",
+    "zoo", "marina",
+]  # fmt: skip
+
+
+async def landmarks(conn: AsyncConnection, geometry: dict[str, Any]) -> list[str]:
+    """Names of city-scale places the proposal's site covers."""
+    return list(
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT DISTINCT name FROM pois
+                    WHERE category = ANY(:kinds) AND name IS NOT NULL
+                      AND ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326))
+                    ORDER BY name
+                    """
+                ),
+                {"kinds": LANDMARK_KINDS, "g": json.dumps(geometry)},
+            )
+        ).scalars()
+    )
+
+
 def persona_seats(area: ImpactArea, total: int, max_neighbourhoods: int = 3) -> dict[int, int]:
     """How many of the reacting personas come from each neighbourhood.
 
