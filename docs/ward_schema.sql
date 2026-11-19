@@ -127,7 +127,8 @@ CREATE TABLE personas (
   backstory         TEXT,
   model             TEXT NOT NULL,            -- fixed per persona, e.g. 'anthropic/claude-haiku'
   home              GEOMETRY(Point, 4326),    -- approximate, random point in their area
-  created_at        TIMESTAMPTZ DEFAULT now()
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  retired_at        TIMESTAMPTZ               -- replaced by a regenerated persona
 );
 
 -- Places a persona uses regularly (parks, stops, stores, landmarks)
