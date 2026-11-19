@@ -1,6 +1,6 @@
 """Drawing support: routing lines along streets, and checking drawn shapes.
 
-Plain async functions so scripts (and the Phase 8 eval) can call them.
+Plain async functions so scripts (and the Phase 9 eval) can call them.
 """
 
 import json
@@ -305,14 +305,16 @@ def _kind_of(geometry: dict[str, Any]) -> GeometryKind | None:
 
 
 def _rules(kind: GeometryKind, type_name: str | None) -> Draw | None:
-    """The type's draw rules, or the loosest limits across types of this kind."""
-    types = catalog()
+    """The draw rules for "class" or "class/subtype", or the loosest limits across
+    everything of this kind."""
     if type_name:
-        t = types.get(type_name)
-        if t is None:
+        name, _, subtype = type_name.partition("/")
+        base = catalog().get(name)
+        if base is None:
             raise ValueError(f"unknown type {type_name!r}")
-        return t.draw
-    same = [t.draw for t in types.values() if t.geometry == kind]
+        return base.resolve(subtype or None).draw
+    every = [t for c in catalog().values() for t in c.expanded()]
+    same = [t.draw for t in every if t.geometry == kind]
     if not same:
         return None
 

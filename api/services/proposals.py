@@ -44,9 +44,11 @@ def validate_parts(parts: list[Part], geometry_type: str | None) -> list[Part]:
         raise ProposalError(f"a proposal has 1 to {MAX_PARTS} parts")
     out = []
     for i, part in enumerate(parts):
-        typedef = catalog().get(part.type)
-        if typedef is None:
+        base = catalog().get(part.type)
+        if base is None:
             raise ProposalError(f"unknown type {part.type!r}")
+        subtype = base.normalise_subtype(part.subtype)
+        typedef = base.resolve(subtype)
         if geometry_type not in GEOMETRY_TYPES[typedef.geometry]:
             raise ProposalError(f"{part.type} needs {typedef.geometry} geometry")
         if typedef.render.kind == "flat" and len(parts) > 1 and i != len(parts) - 1:
@@ -56,7 +58,7 @@ def validate_parts(parts: list[Part], geometry_type: str | None) -> list[Part]:
         except ValueError as e:
             raise ProposalError(f"{part.type}: {e}") from e
         tags = [t.strip()[:40] for t in part.tags if t.strip()][:4]
-        out.append(Part(type=part.type, params=params, tags=tags))
+        out.append(Part(type=part.type, subtype=subtype, params=params, tags=tags))
     return out
 
 
@@ -64,10 +66,8 @@ def validate[P: ProposalInput](raw: P) -> P:
     """The proposal with every part resolved; type/params become the main part's."""
     parts = validate_parts(raw.parts(), raw.geometry.get("type"))
     main, _ = Stack.of(parts).main
-    plain = len(parts) == 1 and not parts[0].tags
-    return raw.model_copy(
-        update={"type": main.type, "params": main.params, "components": [] if plain else parts}
-    )
+    # Parts are always kept: even a single part needs its subtype.
+    return raw.model_copy(update={"type": main.type, "params": main.params, "components": parts})
 
 
 async def create(conn: AsyncConnection, raw: ProposalCreate) -> uuid.UUID:

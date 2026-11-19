@@ -1,0 +1,71 @@
+# Public open space at ground level or on a roof.
+type: open_space
+label: Open space
+description: >-
+  Open green or public space: parks, community gardens, allotments, urban
+  farms; or a rooftop park or garden on top of a building.
+geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 50
+  max_area_m2: 2000000
+green_space: true
+params: {}
+render:
+  kind: flat
+  color: proposalPark
+impact_radius_m: 500
+zone_classes:
+  - open space
+impact_metrics:
+  - replaced
+  - site
+  - parks
+  - schools
+  - population
+  - green_space_per_resident
+relevant_to:
+  - residents
+  - families
+  - seniors
+  - dog_owners
+default_subtype: park
+subtypes:
+  park:
+    label: Park
+    description: A public park.
+  community_garden:
+    label: Community garden
+    description: >-
+      Shared growing space run by neighbours: garden plots, allotments, urban
+      farms, pollinator gardens.
+    draw:
+      tools: [lot, rectangle, polygon, freehand]
+      min_area_m2: 50
+      max_area_m2: 50000
+    params:
+      plots:
+        label: Garden plots
+        unit: plots
+        default: 40
+        min: 5
+        max: 400
+        step: 5
+        main: true
+    render:
+      kind: flat
+      color: proposalGarden
+    impact_metrics:
+      - replaced
+      - site
+      - parks
+      - schools
+      - groceries
+      - population
+      - green_space_per_resident
+      - garden
+    relevant_to:
+      - residents
+      - renters
+      - families
+      - seniors

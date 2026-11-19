@@ -16,7 +16,7 @@ measures:
   openings there are, and the spread of quote lengths.
 
 Prints a report with sample quotes and saves the numbers as JSON in
-api/.cache/phase7_check/ for later comparison (Phase 8). Uses the LLM: about
+api/.cache/phase7_check/ for later comparison (Phase 9). Uses the LLM: about
 30 reactions plus pros and cons.
 """
 
@@ -43,7 +43,7 @@ from services.analysis import analyze
 OUT_DIR = Path(__file__).resolve().parent.parent / ".cache" / "phase7_check"
 PARAMS = {"height_m": 38.4, "units": 150}  # 12 storeys
 LOT_M2 = (2500, 6000)
-# Provisional bars; Phase 8 sets real ones.
+# Provisional bars; Phase 9 sets real ones.
 GROUNDED_MIN = 0.5
 OPENINGS_MIN = 0.8
 
@@ -72,12 +72,27 @@ async def _run(engine: AsyncEngine, redis: Redis, nid: int) -> dict:
         pid = uuid.uuid4()
         await conn.execute(
             text(
-                "INSERT INTO proposals (id, session_id, prompt, type, params, replaces, geom, "
-                "status) VALUES (:id, 'phase7-check', '12-storey condo', 'condo', "
-                "CAST(:p AS jsonb), ARRAY[:fid], ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326), "
-                "'draft')"
+                "INSERT INTO proposals (id, session_id, prompt, type, params, components, "
+                "replaces, geom, status) VALUES (:id, 'phase7-check', '12-storey condo', "
+                "'residential', CAST(:p AS jsonb), CAST(:c AS jsonb), ARRAY[:fid], "
+                "ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326), 'draft')"
             ),
-            {"id": pid, "p": json.dumps(PARAMS), "fid": fid, "g": geometry},
+            {
+                "id": pid,
+                "p": json.dumps(PARAMS),
+                "fid": fid,
+                "g": geometry,
+                "c": json.dumps(
+                    [
+                        {
+                            "type": "residential",
+                            "subtype": "condo_tower",
+                            "params": PARAMS,
+                            "tags": [],
+                        }
+                    ]
+                ),
+            },  # fmt: skip
         )
     async for event in analyze(engine, redis, pid):
         if event.event == "error":

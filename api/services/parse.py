@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from services import llm
-from services.catalog import GEOMETRY_TYPES, GeometryKind, Part, Stack, TypeDef, catalog
+from services.catalog import GEOMETRY_TYPES, GeometryKind, Param, Part, Stack, Subtype, catalog
 from services.proposals import ProposalError, validate_parts
 from settings import get_settings
 
@@ -48,6 +48,7 @@ class ParsedPart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str
+    subtype: str | None = None
     params: dict[str, float] = {}
     storeys: float | None = Field(default=None, gt=0)
     """Height in storeys; converted to the type's height param in code."""
@@ -74,21 +75,32 @@ def _shape(geometry_type: str) -> GeometryKind:
     return next((k for k, ts in GEOMETRY_TYPES.items() if geometry_type in ts), "polygon")
 
 
+def _params(params: dict[str, Param]) -> dict[str, Any]:
+    return {
+        name: {
+            "label": p.label,
+            "unit": p.unit,
+            "default": p.default,
+            "min": p.min,
+            "max": p.max,
+        }  # fmt: skip
+        for name, p in params.items()
+    }
+
+
+def _subtype_brief(sub: Subtype) -> dict[str, Any]:
+    out: dict[str, Any] = {"label": sub.label}
+    if sub.description:
+        out["description"] = sub.description
+    if sub.params:
+        out["extra_params"] = _params(sub.params)
+    if sub.defaults:
+        out["defaults"] = sub.defaults
+    return out
+
+
 def _catalog_brief(shape: GeometryKind) -> list[dict[str, Any]]:
-    """The types that fit the site's shape (an area, a line or a point)."""
-
-    def params(t: TypeDef) -> dict[str, Any]:
-        return {
-            name: {
-                "label": p.label,
-                "unit": p.unit,
-                "default": p.default,
-                "min": p.min,
-                "max": p.max,
-            }  # fmt: skip
-            for name, p in t.params.items()
-        }
-
+    """The classes that fit the site's shape (an area, a line or a point)."""
     return [
         {
             "type": t.type,
@@ -97,9 +109,10 @@ def _catalog_brief(shape: GeometryKind) -> list[dict[str, Any]]:
             "kind": {"flat": "flat (no height)", "extrusion": "building"}.get(
                 t.render.kind, t.render.kind
             ),
-            "params": params(t),
+            "params": _params(t.params),
             "storey_height_m": t.storey_m,
             "height_param": t.render.height_param,
+            "subtypes": {k: _subtype_brief(s) for k, s in t.subtypes.items()},
         }
         for t in catalog().values()
         if t.geometry == shape
@@ -111,7 +124,7 @@ def _current_brief(parts: list[Part]) -> list[dict[str, Any]]:
     stack = Stack.of(parts)
     out = []
     for part, t in stack.parts:
-        entry: dict[str, Any] = part.model_dump()
+        entry: dict[str, Any] = part.model_dump(exclude_none=True)
         height = stack.part_height(part, t)
         if height and t.storey_m:
             entry["storeys"] = max(1, round(height / t.storey_m))
@@ -129,17 +142,21 @@ def resolve(reply: ParseReply, geometry_type: str) -> tuple[list[Part], list[str
     parts: list[Part] = []
     problems: list[str] = []
     for p in reply.parts:
-        t = types.get(p.type)
-        if t is None:
-            problems.append(f"unknown type {p.type!r}; use one of {sorted(types)} plus tags")
+        base = types.get(p.type)
+        if base is None:
+            problems.append(
+                f"unknown type {p.type!r}; use one of the classes {sorted(types)} with a subtype"
+            )
             continue
+        subtype = base.normalise_subtype(p.subtype)
+        t = base.resolve(subtype)
         params = dict(p.params)
         if p.storeys is not None:
             if not (t.render.height_param and t.storey_m):
                 problems.append(f"{p.type} has no height; drop storeys")
                 continue
             params[t.render.height_param] = round(p.storeys * t.storey_m, 1)
-        parts.append(Part(type=p.type, params=params, tags=p.tags))
+        parts.append(Part(type=p.type, subtype=subtype, params=params, tags=p.tags))
     if problems:
         return [], problems
     try:

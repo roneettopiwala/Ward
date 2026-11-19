@@ -85,7 +85,7 @@ export default function PromptBar() {
         // A drawn shape gets the chosen type's own checks (size, length).
         const checks =
           feature.kind === "drawn" && result.parts[0]
-            ? await validateShape(feature.geometry, result.parts[0].type).catch(() => null)
+            ? await validateShape(feature.geometry, `${result.parts[0].type}/${result.parts[0].subtype ?? ""}`).catch(() => null)
             : null;
         setDraft({
           fid,

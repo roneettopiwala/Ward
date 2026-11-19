@@ -1,4 +1,13 @@
-"""The type catalog: every buildable type, loaded from api/catalog/*.yaml."""
+"""The catalog: every buildable class of thing, loaded from api/catalog/*.yaml.
+
+Each file is a use class (residential, retail and food, open space...) with the
+params, draw rules, render style, metrics and persona relevance its buildings
+share. Specific buildings are subtypes of a class (a condo tower, townhouses,
+a community garden); a subtype can set its own defaults and override any class
+field. A part names its class (`type`) and subtype; `resolve` gives the
+effective definition everything else works from. A subtype the catalog doesn't
+know ("cat café") behaves like the class's default subtype under its own name.
+"""
 
 from functools import lru_cache
 from pathlib import Path
@@ -51,11 +60,34 @@ class Draw(BaseModel):
     """Areas snap to building and lot corners; points can snap to the nearest street."""
 
 
-class TypeDef(BaseModel):
-    type: str
+class Subtype(BaseModel):
+    """A specific kind of building within a class. Unset fields come from the class."""
+
     label: str
     description: str = ""
-    """What the type covers; the prompt parser maps requests with it."""
+    params: dict[str, Param] = {}
+    """Added to the class's params, or replacing one with the same name."""
+    defaults: dict[str, float] = {}
+    """New defaults for class params, e.g. a lower height for townhouses."""
+    render: Render | None = None
+    draw: Draw | None = None
+    impact_metrics: list[str] | None = None
+    relevant_to: list[str] | None = None
+    green_space: bool | None = None
+    impact_radius_m: float | None = None
+
+
+FREE_SUBTYPE_CHARS = 40
+"""Longest name for a subtype the catalog doesn't list, e.g. "cat café"."""
+
+
+class TypeDef(BaseModel):
+    type: str
+    """The class id, e.g. residential."""
+    label: str
+    """The class label, or the subtype's once resolved."""
+    description: str = ""
+    """What the class covers; the prompt parser maps requests with it."""
     geometry: GeometryKind
     params: dict[str, Param]
     render: Render
@@ -66,6 +98,54 @@ class TypeDef(BaseModel):
     draw: Draw
     green_space: bool = False
     """Counts as public green space (parks, community gardens) when it covers a site."""
+    zone_classes: list[str] = []
+    """Zone classes (By-law 569-2013) whose permitted uses broadly include this class."""
+    subtypes: dict[str, Subtype] = {}
+    default_subtype: str = ""
+    subtype: str | None = None
+    """Set once resolved: the subtype id, or a free-text name the catalog doesn't list."""
+    class_label: str = ""
+    """Set once resolved: the class's own label."""
+
+    def resolve(self, subtype: str | None) -> "TypeDef":
+        """The effective definition for a subtype (the default one when None)."""
+        known = subtype if subtype in self.subtypes else self.default_subtype
+        sub = self.subtypes.get(known)
+        out = self.model_copy(deep=True)
+        out.subtypes = {}
+        out.class_label = self.label
+        out.subtype = subtype if subtype and subtype not in self.subtypes else known or None
+        if sub is None:
+            return out
+        out.label = sub.label
+        out.description = sub.description or self.description
+        out.params = {**self.params, **sub.params}
+        for name, value in sub.defaults.items():
+            if name in out.params:
+                out.params[name] = out.params[name].model_copy(update={"default": value})
+        for field in ("render", "draw", "impact_metrics", "relevant_to", "green_space",
+                      "impact_radius_m"):  # fmt: skip
+            if (value := getattr(sub, field)) is not None:
+                setattr(out, field, value)
+        if subtype and subtype not in self.subtypes:
+            out.label = subtype[:1].upper() + subtype[1:]
+        return out
+
+    def normalise_subtype(self, name: str | None) -> str | None:
+        """A known subtype id (also from its label), tidied free text, or the default."""
+        if not name or not name.strip():
+            return self.default_subtype or None
+        name = " ".join(name.split())
+        if name in self.subtypes:
+            return name
+        for key, sub in self.subtypes.items():
+            if name.lower() in (sub.label.lower(), key.replace("_", " ")):
+                return key
+        return name.lower()[:FREE_SUBTYPE_CHARS]
+
+    def expanded(self) -> list["TypeDef"]:
+        """Every listed subtype as an effective definition (what the web app picks from)."""
+        return [self.resolve(key) for key in self.subtypes] or [self.resolve(None)]
 
     def resolve_params(self, given: dict[str, Any]) -> dict[str, float]:
         """Defaults filled in; raises ValueError on unknown or out-of-range values."""
@@ -91,9 +171,12 @@ def catalog() -> dict[str, TypeDef]:
 
 
 class Part(BaseModel):
-    """One part of a proposal: a catalog type with its params, e.g. a retail podium."""
+    """One part of a proposal: a class and subtype with params, e.g. a retail podium."""
 
     type: str
+    """The class id."""
+    subtype: str | None = None
+    """A subtype id, a short free-text name, or None for the class's default."""
     params: dict[str, float] = {}
     tags: list[str] = []
     """What it is beyond its catalog type, e.g. ["food hall"]."""
@@ -111,7 +194,7 @@ class Stack(BaseModel):
     @classmethod
     def of(cls, parts: list[Part]) -> "Stack":
         types = catalog()
-        return cls(parts=[(p, types[p.type]) for p in parts])
+        return cls(parts=[(p, types[p.type].resolve(p.subtype)) for p in parts])
 
     @property
     def mixed(self) -> bool:

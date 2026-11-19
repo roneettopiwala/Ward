@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { catalogMap, defaultParams, insertPart } from "./parts";
+import { catalogMap, defaultParams, insertPart, typeOf } from "./parts";
 import type { ShapeCheck } from "./api";
 import type {
   Analysis,
@@ -97,8 +97,8 @@ type MapState = Edits & {
   /** Open a proposal's parts in the preview card to change them (Edit). */
   editProposal: (proposalId: string) => void;
   setPartParam: (index: number, name: string, value: number) => void;
-  setPartType: (index: number, type: string) => void;
-  addPart: (type: string) => void;
+  setPartType: (index: number, type: string, subtype?: string | null) => void;
+  addPart: (type: string, subtype?: string | null) => void;
   removePart: (index: number) => void;
   /** Commit the draft as a proposal (a new version when it has a parent); returns it. */
   commitDraft: () => Proposal | null;
@@ -198,12 +198,12 @@ export const useMapStore = create<MapState>()((set, get) => {
         parts.map((p, i) => (i === index ? { ...p, params: { ...p.params, [name]: value } } : p)),
       ),
 
-    setPartType: (index, type) =>
+    setPartType: (index, type, subtype) =>
       editParts((parts, s) => {
-        const t = s.catalog.find((c) => c.type === type);
+        const t = typeOf({ type, subtype }, catalogMap(s.catalog));
         if (!t) return parts;
         // A new type starts from its own defaults; tags described the old type.
-        const replaced = { type, params: defaultParams(t), tags: [] };
+        const replaced = { type, subtype: t.subtype, params: defaultParams(t), tags: [] };
         if (parts.length === 1) return [replaced];
         return insertPart(
           parts.filter((_, i) => i !== index),
@@ -212,11 +212,12 @@ export const useMapStore = create<MapState>()((set, get) => {
         );
       }),
 
-    addPart: (type) =>
+    addPart: (type, subtype) =>
       editParts((parts, s) => {
-        const t = s.catalog.find((c) => c.type === type);
+        const t = typeOf({ type, subtype }, catalogMap(s.catalog));
         if (!t) return parts;
-        return insertPart(parts, { type, params: defaultParams(t), tags: [] }, catalogMap(s.catalog));
+        const part = { type, subtype: t.subtype, params: defaultParams(t), tags: [] };
+        return insertPart(parts, part, catalogMap(s.catalog));
       }),
 
     removePart: (index) =>

@@ -5,7 +5,7 @@ import type { FilterSpecification, StyleSpecification } from "maplibre-gl";
 
 import { BASEMAP_SOURCE, basemapGlyphs, basemapLayers, basemapSource, FONT, labelLayers } from "./basemap";
 import { buildingsLayer, citySources, groundLayers, transitLayer } from "./city-layers";
-import { partHeight } from "./parts";
+import { catalogMap, partHeight, typeOf } from "./parts";
 import type { MapTokens } from "./tokens";
 import type { BaseFeature, CatalogType, PersonaCard, Proposal } from "./types";
 
@@ -240,13 +240,13 @@ export function proposalsCollection(
   catalog: CatalogType[],
   t: MapTokens,
 ): FeatureCollection {
-  const types = new Map(catalog.map((c) => [c.type, c]));
+  const types = catalogMap(catalog);
   return {
     type: "FeatureCollection",
     features: proposals.flatMap((p) => {
       let base = 0;
       return p.parts.map((part, i): Feature => {
-        const type = types.get(part.type);
+        const type = typeOf(part, types);
         const render = type?.render;
         const height =
           render?.kind === "flat" ? FLAT_HEIGHT_M : render ? partHeight(part, type) : PLACEHOLDER_HEIGHT_M;

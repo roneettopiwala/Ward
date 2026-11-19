@@ -85,7 +85,10 @@ export async function featureDetail(fid: Fid): Promise<BaseFeature | null> {
 
 type CatalogResponse = {
   type: string;
+  subtype: string | null;
+  default_subtype: string;
   label: string;
+  class_label: string;
   geometry: CatalogType["geometry"];
   params: Record<string, CatalogParam>;
   render: { kind: CatalogType["render"]["kind"]; color: string; height_param: string | null };
@@ -157,7 +160,10 @@ export async function fetchCatalog(): Promise<CatalogType[]> {
   const types = (await res.json()) as CatalogResponse;
   return types.map((t) => ({
     type: t.type,
+    subtype: t.subtype,
+    defaultSubtype: t.default_subtype,
     label: t.label,
+    classLabel: t.class_label,
     geometry: t.geometry,
     params: t.params,
     render: { kind: t.render.kind, color: t.render.color, heightParam: t.render.height_param },

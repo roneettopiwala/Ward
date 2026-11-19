@@ -1,6 +1,6 @@
-# An enclosed shopping centre.
-type: mall
-label: Mall
+# Shops, food and other commercial floor space.
+type: retail
+label: Retail and food
 description: >-
   Retail and commercial floor space: shopping centres, shops, grocery stores,
   food halls, restaurants, retail podiums under towers.
@@ -24,6 +24,10 @@ render:
   color: proposalRetail
 impact_radius_m: 500
 storey_m: 5
+zone_classes:
+  - commercial residential
+  - commercial residential employment
+  - commercial local
 impact_metrics:
   - replaced
   - site
@@ -38,3 +42,25 @@ relevant_to:
   - local_business
   - workers
   - commuters
+default_subtype: mall
+subtypes:
+  mall:
+    label: Mall
+    description: An enclosed shopping centre.
+  grocery_store:
+    label: Grocery store
+    defaults:
+      height_m: 6
+  shops:
+    label: Shops
+    description: Street-front stores.
+    defaults:
+      height_m: 6
+  food_hall:
+    label: Food hall
+    defaults:
+      height_m: 8
+  restaurant:
+    label: Restaurant
+    defaults:
+      height_m: 6

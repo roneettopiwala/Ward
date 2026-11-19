@@ -1,0 +1,80 @@
+# Homes in a building: towers, mid-rises, townhouses.
+type: residential
+label: Residential
+description: >-
+  Homes: condo or rental towers and mid-rises, townhouses, affordable,
+  student or seniors' housing.
+geometry: polygon
+draw:
+  tools: [lot, rectangle, polygon, freehand]
+  min_area_m2: 100
+  max_area_m2: 100000
+params:
+  height_m:
+    label: Height
+    unit: m
+    default: 90
+    min: 10
+    max: 300
+    step: 5
+    main: true
+  units:
+    label: Homes
+    unit: homes
+    default: 400
+    min: 10
+    max: 2000
+    step: 10
+    main: true
+render:
+  kind: extrusion
+  height_param: height_m
+  color: accent
+impact_radius_m: 500
+storey_m: 3.2
+zone_classes:
+  - residential
+  - residential apartment
+  - commercial residential
+  - commercial residential employment
+impact_metrics:
+  - replaced
+  - site
+  - zoning_fit
+  - height_context
+  - transit
+  - parks
+  - schools
+  - groceries
+  - population
+  - homes_added
+  - floor_area
+  - green_space_per_resident
+relevant_to:
+  - residents
+  - renters
+  - homeowners
+  - families
+  - commuters
+  - local_business
+default_subtype: condo_tower
+subtypes:
+  condo_tower:
+    label: Condo tower
+    description: Owned apartments in a tower.
+  rental_apartments:
+    label: Rental apartments
+    description: Purpose-built rental apartments.
+  affordable_housing:
+    label: Affordable housing
+    description: Homes rented or sold below market.
+  townhouses:
+    label: Townhouses
+    description: Two- to four-storey attached houses.
+    defaults:
+      height_m: 12
+      units: 20
+  student_residence:
+    label: Student residence
+  seniors_residence:
+    label: Seniors' residence

@@ -4,7 +4,7 @@ import { ArrowRight, Plus, X } from "lucide-react";
 import { useState } from "react";
 
 import { analyzeProposal } from "@/lib/analysis";
-import { catalogMap, homesOf, partLabel, stackHeight, stackLabel, typesFor } from "@/lib/parts";
+import { catalogMap, homesOf, partLabel, stackHeight, stackLabel, typeOf, typesFor } from "@/lib/parts";
 import { useMapStore } from "@/lib/store";
 import type { CatalogParam, CatalogType, Part } from "@/lib/types";
 
@@ -84,17 +84,30 @@ function PartChip({ parts, index, catalog }: { parts: Part[]; index: number; cat
   const removePart = useMapStore((s) => s.removePart);
   const part = parts[index];
   const types = catalogMap(catalog);
+  const current = typeOf(part, types);
+  const key = (type: string, subtype: string | null | undefined) => `${type}/${subtype ?? ""}`;
+  // A free-text subtype ("cat café") isn't in the catalog; keep it as its own option.
+  const listed = types.has(key(part.type, part.subtype));
+  const value = listed ? key(part.type, part.subtype) : key(part.type, current?.subtype);
   return (
     <li className="flex items-center gap-1 rounded-control border border-border-strong bg-surface-raised pl-2">
       <select
         aria-label={`Type of part ${index + 1}`}
-        value={part.type}
-        onChange={(e) => setPartType(index, e.target.value)}
+        value={listed ? value : "free"}
+        onChange={(e) => {
+          const [type, subtype] = e.target.value.split("/");
+          setPartType(index, type, subtype || null);
+        }}
         className="h-8 bg-transparent text-sm focus:outline-none"
       >
+        {!listed && (
+          <option value="free" className="bg-surface">
+            {partLabel(parts, index, types)}
+          </option>
+        )}
         {catalog.map((t) => (
-          <option key={t.type} value={t.type} className="bg-surface">
-            {t.type === part.type ? partLabel(parts, index, types) : t.label}
+          <option key={key(t.type, t.subtype)} value={key(t.type, t.subtype)} className="bg-surface">
+            {key(t.type, t.subtype) === value && listed ? partLabel(parts, index, types) : t.label}
           </option>
         ))}
       </select>
@@ -132,7 +145,7 @@ export default function PreviewCard() {
   const types = catalogMap(catalog);
   // Only types that fit the site's shape: a line takes a bike lane, not a condo.
   const fitting = typesFor(catalog, feature.geometry);
-  const hasParams = draft.parts.some((p) => Object.keys(types.get(p.type)?.params ?? {}).length > 0);
+  const hasParams = draft.parts.some((p) => Object.keys(typeOf(p, types)?.params ?? {}).length > 0);
   const single = fitting.every((t) => t.geometry !== "polygon");
   const { heightM, storeys } = stackHeight(draft.parts, types);
   const homes = homesOf(draft.parts);
@@ -204,10 +217,10 @@ export default function PreviewCard() {
           <div className="mt-2 flex flex-wrap gap-2">
             {fitting.map((t) => (
               <button
-                key={t.type}
+                key={`${t.type}/${t.subtype}`}
                 type="button"
                 onClick={() => {
-                  addPart(t.type);
+                  addPart(t.type, t.subtype);
                   setAdding(false);
                 }}
                 className="h-8 rounded-control border border-border px-3 text-xs text-fg-muted hover:text-fg"
@@ -221,7 +234,7 @@ export default function PreviewCard() {
         <div className="mt-5" hidden={!hasParams}>
           <Label>Parameters</Label>
           {draft.parts.map((part, i) => {
-            const t = types.get(part.type);
+            const t = typeOf(part, types);
             const params = Object.entries(t?.params ?? {});
             if (!t || params.length === 0) return null;
             return (

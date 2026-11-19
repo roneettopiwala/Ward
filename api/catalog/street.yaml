@@ -1,10 +1,10 @@
-# A cycling route drawn along streets.
-type: bike_lane
-label: Bike lane
+# Changes to how a street is used, drawn along streets.
+type: street
+label: Street change
 description: >-
-  A cycling route along streets: painted bike lanes, protected or separated
-  cycle tracks, bike boulevards, multi-use paths. Tag the kind, e.g.
-  ["protected"] or ["painted"].
+  A change along streets: cycling routes (painted bike lanes, protected or
+  separated cycle tracks, bike boulevards, multi-use paths). Tag the kind,
+  e.g. ["protected"] or ["painted"].
 geometry: line
 draw:
   tools: [route]
@@ -30,3 +30,7 @@ relevant_to:
   - local_business
   - families
   - commuters
+default_subtype: bike_lane
+subtypes:
+  bike_lane:
+    label: Bike lane

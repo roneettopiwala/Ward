@@ -72,7 +72,10 @@ export type SelectionStatus = "loading" | "ready" | "not-found" | "error";
  */
 /** One part of a proposal (a catalog type with its params), e.g. a retail podium. */
 export type Part = {
+  /** The catalog class, e.g. "residential". */
   type: string;
+  /** A subtype id ("townhouses"), a free-text name ("cat café"), or null for the class default. */
+  subtype?: string | null;
   params: Record<string, number>;
   /** What it is beyond its catalog type, e.g. ["food hall"]. */
   tags: string[];
@@ -96,9 +99,16 @@ export type Proposal = {
 };
 
 /** A buildable type from the catalog (api/catalog/*.yaml). */
+/** One class and subtype as the API resolves it (class fields with the subtype's overrides). */
 export type CatalogType = {
+  /** The class id. */
   type: string;
+  subtype: string | null;
+  defaultSubtype: string;
+  /** The subtype's label, e.g. "Townhouses". */
   label: string;
+  /** The class's label, e.g. "Residential". */
+  classLabel: string;
   geometry: "polygon" | "line" | "point";
   params: Record<string, CatalogParam>;
   render: {

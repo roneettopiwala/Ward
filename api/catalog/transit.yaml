@@ -1,6 +1,6 @@
-# A new rapid transit stop.
-type: transit_station
-label: Transit station
+# New transit: a stop or station at a point.
+type: transit
+label: Transit
 description: >-
   A new transit stop or station: subway, LRT or GO station, or a major bus or
   streetcar stop or hub. Tag the line or kind, e.g. ["subway"].
@@ -28,3 +28,7 @@ relevant_to:
   - seniors
   - local_business
   - residents
+default_subtype: station
+subtypes:
+  station:
+    label: Transit station

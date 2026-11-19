@@ -148,9 +148,9 @@ CREATE TABLE proposals (
   session_id   TEXT,                          -- anonymous user/session
   parent_id    UUID REFERENCES proposals(id), -- previous version when refined
   prompt       TEXT,                          -- what the user typed
-  type         TEXT NOT NULL,                 -- key from the type catalog
+  type         TEXT NOT NULL,                 -- main part's catalog class
   params       JSONB,                         -- {"height_m": 90, "floors": 25}
-  components   JSONB,                         -- mixed-use parts
+  components   JSONB,                         -- every part: {type, subtype, params, tags}
   replaces     TEXT[],                        -- fids removed by this proposal
   geom         GEOMETRY(Geometry, 4326) NOT NULL,  -- polygon, line, or point
   status       TEXT DEFAULT 'draft',          -- draft, analyzing, done, failed

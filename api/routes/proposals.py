@@ -24,7 +24,8 @@ class ProposalCreated(BaseModel):
 
 @router.get("/catalog")
 async def get_catalog() -> list[TypeDef]:
-    return list(catalog().values())
+    """Every class and listed subtype, each as its effective definition."""
+    return [t for c in catalog().values() for t in c.expanded()]
 
 
 @router.post("/proposals/parse")

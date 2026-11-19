@@ -26,16 +26,6 @@ RETAIL_CATEGORIES = [
     "mall", "department_store", "electronics", "books", "gift", "optician", "beauty",
     "hairdresser", "supermarket", "variety_store", "furniture", "sports", "toys",
 ]  # fmt: skip
-# Zone classes (By-law 569-2013) whose permitted uses broadly include each type.
-ZONE_FITS = {
-    "condo": {
-        "residential", "residential apartment", "commercial residential",
-        "commercial residential employment",
-    },
-    "mall": {"commercial residential", "commercial residential employment", "commercial local"},
-    "park": {"open space"},
-}  # fmt: skip
-
 SOURCE_PROPOSAL = "Your proposal"
 SOURCE_MASSING = "City 3D massing"
 SOURCE_ZONING = "Zoning By-law 569-2013"
@@ -80,7 +70,7 @@ class ProposalInput(BaseModel):
     geometry: dict[str, Any]
     replaces: list[str] = []
     components: list[Part] = []
-    """All parts, bottom to top, for mixed use or tagged parts. Empty: one plain part."""
+    """All parts, bottom to top. Empty only for old callers: one part of the default subtype."""
 
     def parts(self) -> list[Part]:
         return self.components or [Part(type=self.type, params=self.params)]
@@ -354,7 +344,7 @@ async def zoning_fit(ctx: Context) -> None:
         for _, t in ctx.stack.parts:
             if ctx.stack.mixed and t.render.kind == "flat":
                 continue  # a rooftop park is part of the building, not a land use
-            fits = r.zone_class in ZONE_FITS.get(t.type, set())
+            fits = r.zone_class in t.zone_classes
             ctx.add(
                 f"zoning.use_fits.{t.type}",
                 f"Zone class broadly permits a {t.label.lower()}",

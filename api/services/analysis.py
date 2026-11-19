@@ -1,6 +1,6 @@
 """The analysis pipeline: proposal -> fact sheet -> pros/cons + persona reactions.
 
-A plain async generator over an engine and Redis, so scripts (Phase 8 eval)
+A plain async generator over an engine and Redis, so scripts (Phase 9 eval)
 can run it without the web app: `async for event in analyze(engine, redis, id)`.
 
 After the fact sheet, pros/cons and persona reactions run at the same time;

@@ -5,10 +5,29 @@
  */
 import type { CatalogType, Geometry, Part } from "./types";
 
+/** Keyed "class/subtype", plus "class" for the class's default subtype. */
 export type Catalog = Map<string, CatalogType>;
 
 export function catalogMap(catalog: CatalogType[]): Catalog {
-  return new Map(catalog.map((t) => [t.type, t]));
+  const map: Catalog = new Map();
+  for (const t of catalog) {
+    map.set(`${t.type}/${t.subtype}`, t);
+    if (t.subtype === t.defaultSubtype) map.set(t.type, t);
+  }
+  return map;
+}
+
+/** A part's effective type; a subtype the catalog doesn't list behaves like the default. */
+export function typeOf(part: Pick<Part, "type" | "subtype">, catalog: Catalog): CatalogType | undefined {
+  return catalog.get(`${part.type}/${part.subtype}`) ?? catalog.get(part.type);
+}
+
+/** A part's name: its subtype's label, or a free-text subtype as written. */
+function nameOf(part: Part, catalog: Catalog): string {
+  if (part.subtype && !catalog.has(`${part.type}/${part.subtype}`)) {
+    return part.subtype.charAt(0).toUpperCase() + part.subtype.slice(1);
+  }
+  return typeOf(part, catalog)?.label ?? part.type;
 }
 
 export function defaultParams(t: CatalogType): Record<string, number> {
@@ -25,13 +44,12 @@ export function storeysOf(heightM: number, t: CatalogType | undefined): number |
 }
 
 export function isRoof(parts: Part[], index: number, catalog: Catalog): boolean {
-  return parts.length > 1 && catalog.get(parts[index].type)?.render.kind === "flat";
+  return parts.length > 1 && typeOf(parts[index], catalog)?.render.kind === "flat";
 }
 
 export function partLabel(parts: Part[], index: number, catalog: Catalog): string {
   const part = parts[index];
-  const t = catalog.get(part.type);
-  const base = t?.label ?? part.type;
+  const base = nameOf(part, catalog);
   return isRoof(parts, index, catalog) ? `Rooftop ${base.toLowerCase()}` : base;
 }
 
@@ -46,7 +64,7 @@ export function stackHeight(parts: Part[], catalog: Catalog): { heightM: number;
   let heightM = 0;
   let storeys = 0;
   for (const part of parts) {
-    const t = catalog.get(part.type);
+    const t = typeOf(part, catalog);
     const h = partHeight(part, t);
     heightM += h;
     if (h) storeys += storeysOf(h, t) ?? 0;
@@ -61,7 +79,7 @@ export function homesOf(parts: Part[]): number | null {
 
 /** Where a new part of this type goes: flat parts on the roof, buildings under the roof. */
 export function insertPart(parts: Part[], part: Part, catalog: Catalog): Part[] {
-  const isFlat = (p: Part) => catalog.get(p.type)?.render.kind === "flat";
+  const isFlat = (p: Part) => typeOf(p, catalog)?.render.kind === "flat";
   // One roof: a new flat part replaces any existing one.
   if (isFlat(part)) return [...parts.filter((p) => !isFlat(p)), part];
   const flatAt = parts.findIndex(isFlat);
@@ -70,7 +88,7 @@ export function insertPart(parts: Part[], part: Part, catalog: Catalog): Part[] 
 }
 
 export function largestRadius(parts: Part[], catalog: Catalog): number | null {
-  const radii = parts.map((p) => catalog.get(p.type)?.impactRadiusM ?? 0);
+  const radii = parts.map((p) => typeOf(p, catalog)?.impactRadiusM ?? 0);
   return radii.length ? Math.max(...radii) : null;
 }
 
