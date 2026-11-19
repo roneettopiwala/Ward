@@ -10,6 +10,7 @@ per neighbourhood, stored, and reused for every proposal there.
 import json
 import logging
 import random
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,6 +32,8 @@ CITYWIDE_SEED = 1_000_000
 HOME_SEARCH_M = 800
 EVERYDAY_SEARCH_M = 600
 GENERATION_TIMEOUT_S = 300
+GENERATOR_VERSION = 2
+"""Stored with each persona; scripts/regenerate_personas.py rebuilds older pools."""
 # Workers and visitors come from census areas within this distance of the neighbourhood.
 COMMUTE_REACH_M = 10_000
 # Modelling assumptions where the census tables we load don't say.
@@ -500,6 +503,14 @@ class Stories(BaseModel):
     personas: list[Story]
 
 
+# Language at home only guides the name; it must not reach the story (persona rules).
+LANGUAGE_WORDS = re.compile(
+    r"\b(speaks?|spoke|spoken|speaking|languages?|bilingual|fluent|accent|dialect|"
+    r"mother tongue)\b",
+    re.IGNORECASE,
+)
+
+
 def _story_problems(result: Stories, sampled: list[Sampled]) -> list[str]:
     found: list[str] = []
     by_key = {s.key: s for s in sampled}
@@ -514,6 +525,12 @@ def _story_problems(result: Stories, sampled: list[Sampled]) -> list[str]:
         s = by_key.get(p.key)
         if s is None:
             continue
+        written = " ".join([p.backstory, p.tagline, *p.quirks, *p.values])
+        if m := LANGUAGE_WORDS.search(written):
+            found.append(
+                f"persona {p.key}: don't mention languages or speaking ('{m.group(0)}'); "
+                "language_at_home is only for the name"
+            )
         expected = {c.fid for c in s.places}
         if set(p.places) != expected:
             found.append(f"persona {p.key}: places must have exactly the fids {sorted(expected)}")
@@ -595,6 +612,43 @@ async def ensure_citywide(engine: AsyncEngine) -> list[Persona]:
         return await load_citywide(conn)
 
 
+async def regenerate(engine: AsyncEngine, neighbourhood_id: int | None) -> int:
+    """Replace a neighbourhood's personas (None: the citywide ones) with new ones from
+    the current generator. Old personas are retired, not deleted, so past reactions
+    keep their persona. The new stories are written before anything is retired."""
+    lock = neighbourhood_id or 0
+    async with engine.connect() as conn:
+        sampled = (
+            await sample(conn, neighbourhood_id)
+            if neighbourhood_id is not None
+            else await sample_citywide(conn)
+        )
+    stories = await write_stories(sampled)
+    model = get_settings().reaction_model
+    async with engine.begin() as conn:
+        await conn.execute(text("SELECT pg_advisory_xact_lock(4, :n)"), {"n": lock})
+        where = (
+            "neighbourhood_id = :nid AND role <> 'citywide'"
+            if neighbourhood_id is not None
+            else "role = 'citywide'"
+        )
+        await conn.execute(
+            text(f"UPDATE personas SET retired_at = now() WHERE retired_at IS NULL AND {where}"),
+            {"nid": neighbourhood_id},
+        )
+        homes = {
+            r.dguid: r.neighbourhood_id
+            for r in await conn.execute(
+                text("SELECT dguid, neighbourhood_id FROM census_areas WHERE dguid = ANY(:d)"),
+                {"d": [s.dguid for s in sampled]},
+            )
+        }
+        for s, story in zip(sampled, stories, strict=True):
+            nid = neighbourhood_id if neighbourhood_id is not None else homes[s.dguid]
+            await _insert(conn, nid, s, story, model)
+    return len(sampled)
+
+
 async def _insert(
     conn: AsyncConnection, neighbourhood_id: int, s: Sampled, story: Story, model: str
 ) -> None:
@@ -613,6 +667,7 @@ async def _insert(
         "based_on": s.based_on(),
         "tags": _tags(s, story),
         "interests": [i.model_dump() for i in s.interests],
+        "generator": GENERATOR_VERSION,
     }
     traits["voice"] = voices.assign(
         voices.situation(str(persona_id), s.age, s.role, story.stubbornness, traits)
@@ -675,7 +730,13 @@ async def _insert_interest_places(
 async def backfill_interests(conn: AsyncConnection) -> int:
     """Give every stored persona without interests theirs. Fast once all have them."""
     ids = (
-        (await conn.execute(text("SELECT id FROM personas WHERE NOT traits ? 'interests'")))
+        (
+            await conn.execute(
+                text(
+                    "SELECT id FROM personas WHERE retired_at IS NULL AND NOT traits ? 'interests'"
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -798,7 +859,7 @@ async def _load(conn: AsyncConnection, where: str, params: dict[str, Any]) -> li
                 FROM personas p
                 LEFT JOIN persona_places pp ON pp.persona_id = p.id
                 LEFT JOIN places pl ON pl.fid = pp.place_fid
-                WHERE {where}
+                WHERE p.retired_at IS NULL AND {where}
                 GROUP BY p.id
                 ORDER BY p.created_at, p.id
                 """

@@ -11,13 +11,13 @@ Roles:
 `interests` are things each person does, sampled from real participation rates (e.g. "follows the Blue Jays and goes to games"). Weave them into the backstory or quirks where they fit; don't add other hobbies tied to named places.
 
 For each person write:
-- `name`: a fictional first and last name, plausible for someone in Toronto who speaks their `language_at_home`. Never a real public figure. Every first name must be different, and vary backgrounds across the group.
+- `name`: a fictional first and last name, plausible for someone in Toronto who speaks their `language_at_home`. Never a real public figure. `language_at_home` is only for the name: never mention languages, accents or what anyone speaks anywhere else in the profile. Every first name must be different, and vary backgrounds across the group.
 - `occupation`: a specific job inside their occupation group (e.g. "Payroll specialist" for business, finance or administration), or "Retired …" / "… student" when the occupation says so. A worker's job must fit their workplace.
 - `household`: who they live with, matching `household_size` (1 means they live alone), e.g. "Lives with her partner and their 6-year-old".
 - `tagline`: one line for a card, at most 90 characters, e.g. "Rents a one-bedroom in CityPlace, works in finance".
 - `backstory`: 2 or 3 plain sentences about their life and what they care about locally. Use only the places in their list as named local places.
 - `values`: 2 to 4 short phrases for what they weigh when the city changes (e.g. "affordability", "quiet streets", "local jobs").
-- `quirks`: 2 or 3 specific, non-obvious details that shape their opinions (e.g. "Times her run to avoid the Gardiner on-ramp traffic").
+- `quirks`: 2 or 3 specific, non-obvious details from their everyday life that shape their opinions (e.g. "Times her run to avoid the Gardiner on-ramp traffic"). Expert habits, like reading planning reports or zoning documents, only if their job involves them.
 - `openness`, `trust_in_government`, `stubbornness`: numbers from 0 to 1. Vary them across the group.
 - `has_children`, `has_dog`: true or false, consistent with the household.
 - `places`: for every place in their list, keyed by its `fid`, a short phrase for how they use it, e.g. "commutes from", "walks the dog at", "works at", "buys groceries at".
@@ -26,6 +26,7 @@ Rules:
 - Base people on their facts, not on stereotypes about age, language, renting, jobs or any neighbourhood. Do not describe any neighbourhood with reputation labels (safe, dangerous, rough, sketchy, upscale and so on).
 - Make the group varied in temperament: some are hopeful about change, some are wary, most are somewhere in between.
 - Do not invent statistics.
+- Never put double quotes inside a text value (they break the JSON); use single quotes for nicknames or sayings.
 
 Reply with only a JSON object in this shape:
 
