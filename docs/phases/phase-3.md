@@ -36,7 +36,7 @@ pros and cons section. Persona cards come in Phase 4.
 
 ## Design for later
 - The analysis pipeline is a plain async function taking a proposal, so the
-  Phase 8 eval script can call it without the frontend.
+  Phase 9 eval script can call it without the frontend.
 - Every number shown comes from the fact sheet. The LLM may only phrase
   facts, never invent them.
 

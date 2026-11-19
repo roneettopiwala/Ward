@@ -20,7 +20,7 @@ area actually say.
   developments, nearby places, common themes in local comments)
 - One model for all persona reactions (Claude Sonnet), still routed through the LiteLLM client
   wrapper so the model is a config change. More models are considered only
-  if Phase 8 eval shows reactions still sound alike.
+  if Phase 9 eval shows reactions still sound alike.
 - Persona voices: each persona gets a fixed voice (length, directness,
   reasoning style, temperature, opening), assigned in code when the persona
   is created: mostly a seeded random draw, lightly nudged by situation
